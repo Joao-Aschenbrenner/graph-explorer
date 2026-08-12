@@ -4,14 +4,16 @@ import {
   ipcMain,
   dialog,
   safeStorage,
-  webContents,
   Menu,
 } from "electron";
+import electronUpdater from "electron-updater";
 import { promises as fsp, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { spawn } from "child_process";
 import crypto from "crypto";
+
+const { autoUpdater } = electronUpdater;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Em builds empacotados (portable/instalador), __dirname é um diretório temporário.
@@ -25,6 +27,85 @@ let sessionProvider = null;
 let encryptionAvailable = false;
 let graphifyCaps = null;
 let activeJob = null;
+let updaterInitialized = false;
+let updateDownloaded = false;
+let updateStatus = {
+  state: "idle",
+  currentVersion: app.getVersion(),
+  availableVersion: null,
+  percent: null,
+  supported: false,
+  message: "",
+};
+
+function publishUpdateStatus(patch = {}) {
+  updateStatus = { ...updateStatus, ...patch, currentVersion: app.getVersion() };
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("update:status", updateStatus);
+  }
+}
+
+async function checkForAppUpdates(manual = false) {
+  if (!updateStatus.supported) return updateStatus;
+  publishUpdateStatus({ state: "checking", message: manual ? "Verificando atualização..." : "" });
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    publishUpdateStatus({ state: "error", message: "Falha ao verificar atualização: " + error.message });
+  }
+  return updateStatus;
+}
+
+function initializeAutoUpdater() {
+  if (updaterInitialized) return;
+  updaterInitialized = true;
+
+  const isPortable = Boolean(process.env.PORTABLE_EXECUTABLE_FILE || process.env.PORTABLE_EXECUTABLE_DIR);
+  const supported = app.isPackaged && process.platform === "win32" && !isPortable;
+  publishUpdateStatus({
+    supported,
+    state: supported ? "idle" : "unsupported",
+    message: supported ? "" : isPortable ? "Atualização automática requer o instalador Setup" : "Atualização automática ativa apenas no app instalado",
+  });
+  if (!supported) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.on("checking-for-update", () => publishUpdateStatus({ state: "checking", message: "Verificando atualização..." }));
+  autoUpdater.on("update-available", (info) => publishUpdateStatus({
+    state: "available",
+    availableVersion: info.version,
+    percent: 0,
+    message: `Baixando v${info.version} em segundo plano...`,
+  }));
+  autoUpdater.on("update-not-available", () => publishUpdateStatus({
+    state: "current",
+    availableVersion: null,
+    percent: null,
+    message: "Aplicativo atualizado",
+  }));
+  autoUpdater.on("download-progress", (progress) => publishUpdateStatus({
+    state: "downloading",
+    percent: Math.round(progress.percent),
+    message: `Baixando atualização: ${Math.round(progress.percent)}%`,
+  }));
+  autoUpdater.on("update-downloaded", (info) => {
+    updateDownloaded = true;
+    publishUpdateStatus({
+      state: "downloaded",
+      availableVersion: info.version,
+      percent: 100,
+      message: `v${info.version} pronta. Feche o app para instalar.`,
+    });
+  });
+  autoUpdater.on("error", (error) => publishUpdateStatus({
+    state: "error",
+    message: "Falha na atualização: " + error.message,
+  }));
+
+  setTimeout(() => checkForAppUpdates(false), 2500);
+}
 
 // ── Safe storage (só após app.whenReady) ──────────────────────
 async function detectEncryption() {
@@ -418,6 +499,9 @@ async function registerIpcHandlers() {
     if (activeJob.child) { try { activeJob.child.kill("SIGTERM"); } catch {} killTree(activeJob.child.pid); }
     return { ok: true };
   });
+
+  ipcMain.handle("update:status", async () => updateStatus);
+  ipcMain.handle("update:check", async () => checkForAppUpdates(true));
 }
 
 // ── Window ────────────────────────────────────────────────────
@@ -440,6 +524,7 @@ function createWindow(page) {
     },
   });
   mainWindow.loadFile(page || join(__dirname, "public", "index.html"));
+  mainWindow.webContents.on("did-finish-load", () => publishUpdateStatus());
   mainWindow.on("closed", () => { mainWindow = null; });
 }
 
@@ -460,6 +545,7 @@ if (isMain) {
     graphifyCaps = await probeGraphify();
     await registerIpcHandlers();
     createWindow();
+    initializeAutoUpdater();
     app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
   app.on("window-all-closed", () => app.quit());
@@ -467,4 +553,4 @@ if (isMain) {
 
 function setMainWindow(w) { mainWindow = w; }
 
-export { registerIpcHandlers, createWindow, detectEncryption, setMainWindow };
+export { registerIpcHandlers, createWindow, detectEncryption, initializeAutoUpdater, setMainWindow };

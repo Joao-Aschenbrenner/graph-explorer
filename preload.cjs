@@ -19,6 +19,16 @@ contextBridge.exposeInMainWorld("graphExplorer", {
 
   cancelGraphify: (jobId) => ipcRenderer.invoke("graphify:cancel", jobId),
 
+  getUpdateStatus: () => ipcRenderer.invoke("update:status"),
+
+  checkForUpdates: () => ipcRenderer.invoke("update:check"),
+
+  onUpdateStatus: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("update:status", listener);
+    return () => ipcRenderer.removeListener("update:status", listener);
+  },
+
   onGraphifyEvent: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("graphify:event", listener);

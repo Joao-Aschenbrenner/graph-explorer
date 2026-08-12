@@ -227,6 +227,24 @@ async function runQa() {
     gate("APP_STARTUP", splashVisible && hasBrand && hasSplashSvg,
       `splash=${splashVisible} brand=${hasBrand} splashSvg=${hasSplashSvg}`);
 
+    // ── GATES: primeira execução sem config ──
+    await waitFor(qaWindow, "/^v\\d+\\.\\d+\\.\\d+/.test(document.getElementById('versionBadge').textContent)", 5000);
+    const freshSetupRaw = await ev(qaWindow, `JSON.stringify({
+      options: [...document.getElementById('providerSelect').options].map(o=>o.value),
+      labels: [...document.getElementById('providerSelect').options].map(o=>o.textContent),
+      selected: document.getElementById('providerSelect').value,
+      width: parseFloat(getComputedStyle(document.getElementById('providerSelect')).width),
+      versionText: document.getElementById('versionBadge').textContent,
+      updateApi: typeof window.graphExplorer.getUpdateStatus === 'function' && typeof window.graphExplorer.checkForUpdates === 'function'
+    })`);
+    const freshSetup = normalizeResult(freshSetupRaw) || {};
+    const requiredProviders = ["none","openai","anthropic","gemini","deepseek","kimi","ollama","azure","bedrock","nvidia","openrouter","groq","lmstudio","vllm","custom"];
+    gate("FRESH_SETUP_PROVIDERS",
+      requiredProviders.every(p=>freshSetup.options.includes(p)) && freshSetup.options.length === 15 && freshSetup.selected === "none" && freshSetup.width >= 300,
+      `options=${freshSetup.options.length} selected=${freshSetup.selected} width=${freshSetup.width}`);
+    gate("VERSION_BADGE", /^v\d+\.\d+\.\d+/.test(freshSetup.versionText) && freshSetup.updateApi,
+      `text=${freshSetup.versionText} api=${freshSetup.updateApi}`);
+
     // ── PONTO 1: Logo e ícones ──
     log("Ponto 1: Logo e ícones");
     await shot(qaWindow, "01-splash");
@@ -823,6 +841,7 @@ async function runQa() {
     }
 
     // Verificar orphans pós-cleanup
+    await sleep(1000);
     const orphAfter = noOrphans();
     gate("CLEANUP", orphAfter.length === 0, orphAfter.join(",") || "none");
 

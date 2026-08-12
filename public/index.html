@@ -15,6 +15,12 @@ button{font-family:inherit}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 input,select{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:9px 12px;color:#c9d1d9;font-size:13px;outline:none}
 input:focus,select:focus{border-color:#58a6ff}
+#providerSelect{width:100%;min-width:320px}
+.version-badge{position:fixed;top:10px;right:14px;z-index:1100;max-width:240px;border:1px solid #30363d;border-radius:999px;padding:6px 10px;background:#161b22;color:#8b949e;font-size:11px;font-weight:700;line-height:1;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 4px 16px #0005}
+.version-badge:hover{border-color:#58a6ff;color:#c9d1d9}
+.version-badge.checking,.version-badge.available,.version-badge.downloading{color:#58a6ff}
+.version-badge.downloaded{color:#3fb950;border-color:#238636}
+.version-badge.error{color:#f85149}
 @keyframes fade-up{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes bar{0%{left:-40%}100%{left:100%}}
@@ -52,7 +58,7 @@ input:focus,select:focus{border-color:#58a6ff}
 .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}
 
 /* ── Main ── */
-.header{height:52px;min-height:52px;display:flex;align-items:center;gap:12px;padding:0 16px;background:#161b22;border-bottom:1px solid #30363d}
+.header{height:52px;min-height:52px;display:flex;align-items:center;gap:12px;padding:0 138px 0 16px;background:#161b22;border-bottom:1px solid #30363d}
 .header .brand{display:flex;align-items:center;gap:8px;font-weight:700;color:#f0f6fc;cursor:pointer}
 .header .brand svg{width:22px;height:22px}
 .header .grow{flex:1}
@@ -109,6 +115,7 @@ webview{width:100%;height:100%;border:none;background:#0d1117}
 </style>
 </head>
 <body>
+<button class="version-badge" id="versionBadge" type="button" title="Clique para verificar atualizações">carregando versão...</button>
 
 <!-- ── Splash ── -->
 <div id="splash">
@@ -176,7 +183,27 @@ webview{width:100%;height:100%;border:none;background:#0d1117}
 
     <div class="row">
       <label>Provedor de IA (opcional — para nomes melhores)</label>
-      <select id="providerSelect"></select>
+      <select id="providerSelect">
+        <optgroup label="Backends diretos">
+          <option value="none">Sem IA (análise local)</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic / Claude</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="kimi">Kimi</option>
+          <option value="ollama">Ollama (local)</option>
+          <option value="azure">Azure OpenAI</option>
+          <option value="bedrock">AWS Bedrock</option>
+        </optgroup>
+        <optgroup label="OpenAI-compatible">
+          <option value="nvidia">NVIDIA NIM</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="groq">Groq</option>
+          <option value="lmstudio">LM Studio</option>
+          <option value="vllm">vLLM</option>
+          <option value="custom">Custom</option>
+        </optgroup>
+      </select>
       <div class="provider-fields hidden" id="providerFields">
         <div class="grid2" style="margin-bottom:8px">
           <input id="endpointInput" placeholder="endpoint">
@@ -313,16 +340,38 @@ function showView(id){
 // ── Setup ──
 function buildProviderSelect(){
   const sel = $("providerSelect");
-  sel.innerHTML = "";
-  PROVIDER_OPTIONS.forEach(g=>{
-    const og = document.createElement("optgroup"); og.label = g.group;
-    g.items.forEach(([v,l])=>{ const o=document.createElement("option"); o.value=v; o.textContent=l; og.appendChild(o); });
-    sel.appendChild(og);
-  });
+  if (!sel.options.length) {
+    PROVIDER_OPTIONS.forEach(g=>{
+      const og = document.createElement("optgroup"); og.label = g.group;
+      g.items.forEach(([v,l])=>{ const o=document.createElement("option"); o.value=v;o.textContent=l;og.appendChild(o); });
+      sel.appendChild(og);
+    });
+  }
   sel.value = (state.config && state.config.provider) || "none";
   sel.onchange = onProviderChange;
   onProviderChange();
 }
+
+function renderUpdateStatus(status){
+  const badge = $("versionBadge");
+  if (!badge || !status) return;
+  const current = status.currentVersion || "?";
+  let text = `v${current}`;
+  if (status.state === "checking") text += " · verificando";
+  else if (status.state === "downloading") text = `v${status.availableVersion || current} · ${status.percent || 0}%`;
+  else if (status.state === "available") text = `v${status.availableVersion || current} · baixando`;
+  else if (status.state === "downloaded") text = `v${status.availableVersion || current} · pronta`;
+  badge.textContent = text;
+  badge.className = `version-badge ${status.state || "idle"}`;
+  badge.title = status.message || (status.supported ? "Clique para verificar atualizações" : "Use o instalador Setup para atualização automática");
+}
+
+api.onUpdateStatus(renderUpdateStatus);
+api.getUpdateStatus().then(renderUpdateStatus).catch(()=>{});
+$("versionBadge").onclick = async ()=>{
+  const status = await api.checkForUpdates().catch((error)=>({ state:"error", currentVersion:"?", message:error.message }));
+  renderUpdateStatus(status);
+};
 function onProviderChange(){
   const p = $("providerSelect").value;
   const fields = $("providerFields");

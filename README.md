@@ -17,6 +17,14 @@ npm start
 
 Ou no Windows, use `iniciar.bat` (mata instâncias antigas e abre o app).
 
+### Atualizações automáticas
+
+- Instale uma vez usando `Graph-Explorer-Setup-*.exe`.
+- Ao abrir, o app verifica o release mais recente no GitHub e baixa em segundo plano.
+- Ao fechar, a atualização baixada é instalada automaticamente. A próxima abertura já usa a nova versão.
+- O canto superior direito mostra a versão e o estado do download; clique no badge para verificar manualmente.
+- A versão portátil não se autoatualiza; use o instalador `Setup` para habilitar esse fluxo.
+
 ## Como usar
 
 1. **Selecione a pasta de projetos** — o app escaneia a pasta e lista os repositórios/projetos (detecta `.git`, `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `Dockerfile`, etc.).
@@ -37,12 +45,12 @@ main.js           processo principal (IPC, scan, jobs de graphify, safeStorage)
 preload.cjs       bridge IPC com contextIsolation + sandbox
 public/index.html UI (splash, setup, sidebar, webview, modais)
 assets/           ícones e logo
-ge-qa-full.mjs    suíte QA funcional (28 gates) — isolada via GE_CONFIG_DIR
+ge-qa-full.mjs    suíte QA funcional (30 gates) — isolada via GE_CONFIG_DIR
 ```
 
 ## Qualidade
 
-- 28 gates funcionais de QA cobrem: startup/boot real, scan de workspace, geração/cancelamento/retomada de jobs, rejeição de chave inválida, validação de chave+modelo+inferência, contrato completo de save, fluxo `Salvar e abrir`, reutilização segura da credencial criptografada, credenciais de sessão vs persistidas, modo sem IA, isolamento do webview, cópia de prompt, ausência de porta 3456, ausência de caminhos hardcoded e zero processos órfãos.
+- 30 gates funcionais de QA cobrem: primeira execução com todos os provedores, versão/update API visíveis, startup/boot real, scan de workspace, geração/cancelamento/retomada de jobs, rejeição de chave inválida, validação de chave+modelo+inferência, contrato completo de save, fluxo `Salvar e abrir`, reutilização segura da credencial criptografada, credenciais de sessão vs persistidas, modo sem IA, isolamento do webview, cópia de prompt, ausência de porta 3456, ausência de caminhos hardcoded e zero processos órfãos.
 - O QA roda com diretório de configuração temporário (`GE_CONFIG_DIR`) e nunca toca o `config.json` real.
 
 ## Segurança

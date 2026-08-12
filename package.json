@@ -1,6 +1,6 @@
 {
   "name": "graph-explorer",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Electron GUI desktop para gerar e visualizar knowledge graphs com Graphify",
   "author": "Joao Aschenbrenner",
   "main": "main.js",
@@ -8,7 +8,7 @@
   "type": "module",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable"
+    "dist": "electron-builder --win nsis portable"
   },
   "build": {
     "appId": "com.joaoaschenbrenner.graphexplorer",
@@ -27,11 +27,35 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico"
-    }
+    },
+    "portable": {
+      "artifactName": "Graph-Explorer-${version}.${ext}"
+    },
+    "nsis": {
+      "artifactName": "Graph-Explorer-Setup-${version}.${ext}",
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Joao-Aschenbrenner",
+        "repo": "graph-explorer",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "electron": "^43.1.0",
