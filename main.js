@@ -380,7 +380,17 @@ function createWindow(page) {
   mainWindow.on("closed", () => { mainWindow = null; });
 }
 
-const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
+// Detecta se este módulo é o entry point do app (e não um import de harness/test).
+// `electron .`: argv[1] é a pasta do app → true.
+// `electron main.js`: argv[1] é main.js → true.
+// Empacotado: argv[1] é .asar/exe → app.isPackaged garante true.
+// Harness QA (npx electron ge-qa-full.mjs): argv[1] é um script .mjs → false.
+const argv1 = process.argv[1] || "";
+const isMain =
+  app.isPackaged ||
+  !argv1 ||
+  !/\.(mjs|js|cjs)$/i.test(argv1) ||
+  /[\\/]main\.(js|mjs|cjs)$/i.test(argv1);
 if (isMain) {
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);

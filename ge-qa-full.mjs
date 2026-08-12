@@ -665,6 +665,23 @@ async function runQa() {
         `filterReturns0=${filteredCount === 0}`);
     }
 
+    // ── GATE: REAL_BOOT (createWindow do app real) ──
+    log("Test: REAL_BOOT");
+    try {
+      const { createWindow: appCreateWindow } = await import("./main.js");
+      appCreateWindow();
+      await sleep(2500);
+      const wins = BrowserWindow.getAllWindows();
+      const bootWin = wins.find(w => !w.isDestroyed() && w !== qaWindow);
+      const title = bootWin ? bootWin.getTitle() : "";
+      const loaded = bootWin ? !bootWin.webContents.isLoading() : false;
+      gate("REAL_BOOT", !!bootWin && loaded, `wins=${wins.length} title=${title} loaded=${loaded}`);
+      if (bootWin) { bootWin.destroy(); }
+      await sleep(300);
+    } catch (e) {
+      gate("REAL_BOOT", false, e.message);
+    }
+
     // ── GATE: NO_ORPHAN_PROCESSES ──
     log("Test: NO_ORPHAN_PROCESSES");
     const orph = noOrphans();
