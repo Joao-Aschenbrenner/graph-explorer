@@ -1,6 +1,6 @@
 {
   "name": "graph-explorer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Electron GUI desktop para gerar e visualizar knowledge graphs com Graphify",
   "author": "Joao Aschenbrenner",
   "main": "main.js",

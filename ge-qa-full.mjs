@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 import os from "os";
 import { execSync } from "child_process";
+import { createServer } from "http";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REAL_WS = "C:\\Users\\USUARIO\\Desktop\\PROJETOS";
@@ -129,6 +130,38 @@ function makeWin() {
 }
 
 let qaWindow = null;
+let providerFixture = null;
+
+async function startProviderFixture() {
+  const seen = { models: 0, inference: 0 };
+  const server = createServer((req, res) => {
+    const authorized = req.headers.authorization === "Bearer qa-fixture-key";
+    res.setHeader("Content-Type", "application/json");
+    if (!authorized) {
+      res.statusCode = 401;
+      res.end(JSON.stringify({ error: "unauthorized" }));
+      return;
+    }
+    if (req.url === "/v1/models") {
+      seen.models++;
+      res.end(JSON.stringify({ data: [{ id: "qa-model" }] }));
+      return;
+    }
+    if (req.url === "/v1/chat/completions" && req.method === "POST") {
+      seen.inference++;
+      res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "OK" } }] }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: "not-found" }));
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  return { server, seen, endpoint: `http://127.0.0.1:${address.port}/v1` };
+}
 
 // Projeto temporário para testar geração de grafo
 const TMP_PROJ_NAME = "ge-qa-target-" + Date.now().toString().slice(-6);
@@ -156,6 +189,7 @@ async function runQa() {
   await app.whenReady();
   log("ready");
 
+  providerFixture = await startProviderFixture();
   await registerIpcHandlers();
   qaWindow = makeWin();
   setMainWindow(qaWindow); // main.js:emit() só envia se mainWindow estiver setado
@@ -272,6 +306,90 @@ async function runQa() {
     }
 
     await shot(qaWindow, "02-main");
+
+    // ── GATES: Provider auth/inference + Salvar e abrir pela UI ──
+    log("Test: PROVIDER_AUTH_REJECT");
+    const fixtureEndpointEsc = providerFixture.endpoint.replace(/\\/g, "\\\\");
+    const invalidProviderRaw = await withTimeout("PROVIDER_AUTH_REJECT", ev(qaWindow, `(async()=>{
+      const r = await window.graphExplorer.testProvider({
+        provider:"nvidia", endpoint:"${fixtureEndpointEsc}", model:"qa-model", apiKey:"wrong-key"
+      });
+      return JSON.stringify(r);
+    })()`), 30000);
+    const invalidProvider = normalizeResult(invalidProviderRaw) || {};
+    gate("PROVIDER_AUTH_REJECT", invalidProvider.ok === false && /401|inválida/i.test(invalidProvider.message || ""),
+      `ok=${invalidProvider.ok} message=${invalidProvider.message}`);
+
+    log("Test: PROVIDER_INFERENCE");
+    const validProviderRaw = await withTimeout("PROVIDER_INFERENCE", ev(qaWindow, `(async()=>{
+      const r = await window.graphExplorer.testProvider({
+        provider:"nvidia", endpoint:"${fixtureEndpointEsc}", model:"qa-model", apiKey:"qa-fixture-key"
+      });
+      return JSON.stringify(r);
+    })()`), 30000);
+    const validProvider = normalizeResult(validProviderRaw) || {};
+    gate("PROVIDER_INFERENCE", validProvider.ok === true && providerFixture.seen.models > 0 && providerFixture.seen.inference > 0,
+      `ok=${validProvider.ok} models=${providerFixture.seen.models} inference=${providerFixture.seen.inference}`);
+
+    log("Test: SAVE_AND_OPEN");
+    const saveUiRaw = await withTimeout("SAVE_AND_OPEN", ev(qaWindow, `(async()=>{
+      showSetup();
+      await new Promise(r=>setTimeout(r,100));
+      document.getElementById('providerSelect').value='nvidia';
+      document.getElementById('providerSelect').dispatchEvent(new Event('change'));
+      document.getElementById('endpointInput').value='${fixtureEndpointEsc}';
+      document.getElementById('modelInput').value='qa-model';
+      document.getElementById('keyInput').value='qa-fixture-key';
+      document.getElementById('sessionOnly').checked=false;
+      document.getElementById('btnSaveOpen').click();
+      const started=Date.now();
+      while(Date.now()-started<20000){
+        if(document.getElementById('mainView').classList.contains('visible')) break;
+        await new Promise(r=>setTimeout(r,100));
+      }
+      return JSON.stringify({
+        main:document.getElementById('mainView').classList.contains('visible'),
+        setup:document.getElementById('setupView').classList.contains('visible'),
+        projects:document.querySelectorAll('.proj').length,
+        provider:state.config.provider,
+        endpoint:state.config.endpoint,
+        model:state.config.model,
+        button:document.getElementById('btnSaveOpen').textContent
+      });
+    })()`), 30000);
+    const saveUi = normalizeResult(saveUiRaw) || {};
+    let providerCfg = {};
+    try { providerCfg = JSON.parse(fs.readFileSync(join(TMP, "config.json"), "utf-8")); } catch {}
+    const saveContract = saveUi.provider === "nvidia" && saveUi.endpoint === providerFixture.endpoint && saveUi.model === "qa-model";
+    gate("CONFIG_SAVE_CONTRACT", saveContract,
+      `provider=${saveUi.provider} endpointOk=${saveUi.endpoint === providerFixture.endpoint} model=${saveUi.model}`);
+    gate("SAVE_AND_OPEN", saveUi.main === true && saveUi.setup === false && saveUi.projects > 0,
+      `main=${saveUi.main} setup=${saveUi.setup} projects=${saveUi.projects} button=${saveUi.button}`);
+    gate("PROVIDER_CREDENTIAL_STORAGE",
+      typeof providerCfg.encryptedCredential === "string" && providerCfg.encryptedCredential.length > 0 && !("apiKey" in providerCfg),
+      `encrypted=${!!providerCfg.encryptedCredential} noPlain=${!("apiKey" in providerCfg)}`);
+
+    log("Test: CREDENTIAL_REUSE");
+    const reuseRaw = await withTimeout("CREDENTIAL_REUSE", ev(qaWindow, `(async()=>{
+      showSetup();
+      await new Promise(r=>setTimeout(r,100));
+      document.getElementById('keyInput').value='';
+      document.getElementById('btnSaveOpen').click();
+      const started=Date.now();
+      while(Date.now()-started<20000){
+        if(document.getElementById('mainView').classList.contains('visible')) break;
+        await new Promise(r=>setTimeout(r,100));
+      }
+      const r=await window.graphExplorer.testProvider({
+        provider:'nvidia', endpoint:'${fixtureEndpointEsc}', model:'qa-model', apiKey:''
+      });
+      return JSON.stringify({main:document.getElementById('mainView').classList.contains('visible'),test:r});
+    })()`), 30000);
+    const reuse = normalizeResult(reuseRaw) || {};
+    let reuseCfg = {};
+    try { reuseCfg = JSON.parse(fs.readFileSync(join(TMP, "config.json"), "utf-8")); } catch {}
+    gate("CREDENTIAL_REUSE", reuse.main === true && reuse.test?.ok === true && !!reuseCfg.encryptedCredential && !("apiKey" in reuseCfg),
+      `main=${reuse.main} testOk=${reuse.test?.ok} encrypted=${!!reuseCfg.encryptedCredential}`);
 
     // ── GATE: WORKSPACE_SCAN ──
     log("Test: WORKSPACE_SCAN");
@@ -698,6 +816,11 @@ async function runQa() {
     // Cleanup projeto temporário
     rmTmpProj();
     log("Projeto temporário removido");
+
+    if (providerFixture?.server) {
+      await new Promise((resolve) => providerFixture.server.close(resolve));
+      providerFixture = null;
+    }
 
     // Verificar orphans pós-cleanup
     const orphAfter = noOrphans();

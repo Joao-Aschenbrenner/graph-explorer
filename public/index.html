@@ -283,7 +283,7 @@ const PROVIDER_OPTIONS = [
 const $ = (id) => document.getElementById(id);
 const api = window.graphExplorer;
 
-const state = { workspace:null, projects:[], selected:null, activeJobId:null, activeOp:null, graphify:null, safeAvailable:true };
+const state = { workspace:null, projects:[], selected:null, activeJobId:null, activeOp:null, graphify:null, safeAvailable:true, config:{ encryptionAvailable:true } };
 
 // subscribe to graphify events once
 api.onGraphifyEvent(handleEvent);
@@ -328,8 +328,10 @@ function onProviderChange(){
   const fields = $("providerFields");
   if (p === "none"){ fields.classList.add("hidden"); return; }
   fields.classList.remove("hidden");
-  $("endpointInput").value = PRESETS[p].endpoint || (state.config && state.config.endpoint) || "";
-  $("modelInput").value = PRESETS[p].model || (state.config && state.config.model) || "";
+  const cfg = state.config || {};
+  const sameProvider = cfg.provider === p;
+  $("endpointInput").value = sameProvider ? (cfg.endpoint || PRESETS[p].endpoint || "") : (PRESETS[p].endpoint || "");
+  $("modelInput").value = sameProvider ? (cfg.model || PRESETS[p].model || "") : (PRESETS[p].model || "");
 }
 function applySecurityState(cb, warn, status){
   cb.checked = !status.encryptionAvailable || Boolean(status.sessionOnly);
@@ -358,41 +360,69 @@ function showSetup(){
   $("btnSaveOpen").onclick = async ()=>{
     if (!state.workspace){ alert("Selecione uma pasta de projetos primeiro."); return; }
     const p = $("providerSelect").value;
-    const sessionOnly = !state.config.encryptionAvailable || $("sessionOnly").checked;
-    const res = await api.saveConfig({
-      workspace: state.workspace,
-      provider: p,
-      endpoint: p==="none" ? "" : $("endpointInput").value.trim(),
-      model: p==="none" ? "" : $("modelInput").value.trim(),
-      apiKey: p==="none" ? "" : $("keyInput").value,
-      sessionOnly
-    });
-    if (!res || !res.ok){ alert("Não foi possível salvar: " + ((res && res.error) || "erro desconhecido")); return; }
-    state.config = res;
-    enterMain();
+    const endpoint = p==="none" ? "" : $("endpointInput").value.trim();
+    const model = p==="none" ? "" : $("modelInput").value.trim();
+    const sessionOnly = state.config.encryptionAvailable === false || $("sessionOnly").checked;
+    const button = $("btnSaveOpen");
+    button.disabled = true;
+    button.textContent = "Salvando...";
+    try {
+      const res = await api.saveConfig({
+        workspace: state.workspace,
+        provider: p,
+        endpoint,
+        model,
+        apiKey: p==="none" ? "" : $("keyInput").value,
+        sessionOnly
+      });
+      if (!res || !res.ok) throw new Error((res && res.error) || "erro desconhecido");
+      state.config = { ...state.config, ...res, workspace:state.workspace, provider:p, endpoint, model };
+      button.textContent = "Abrindo...";
+      await enterMain();
+    } catch (e) {
+      alert("Não foi possível salvar e abrir: " + e.message);
+    } finally {
+      button.textContent = "Salvar e abrir";
+      refreshSaveBtn();
+    }
   };
 }
 function refreshSaveBtn(){ $("btnSaveOpen").disabled = !state.workspace; }
 async function testConnection(){
   const p = $("providerSelect").value;
   const r = $("testResult");
-  r.className = "test-result"; r.textContent = "testando...";
-  const res = await api.testProvider({ provider:p, endpoint:$("endpointInput").value.trim(), model:$("modelInput").value.trim(), key:$("keyInput").value });
-  if (res.ok){ r.className="test-result ok"; r.textContent = "✓ " + res.message; }
-  else { r.className="test-result err"; r.textContent = "✗ " + res.message; }
+  const button = $("btnTest");
+  r.className = "test-result"; r.textContent = "testando chave e modelo...";
+  button.disabled = true;
+  try {
+    const res = await api.testProvider({ provider:p, endpoint:$("endpointInput").value.trim(), model:$("modelInput").value.trim(), apiKey:$("keyInput").value });
+    if (res.ok){ r.className="test-result ok"; r.textContent = "✓ " + res.message; }
+    else { r.className="test-result err"; r.textContent = "✗ " + res.message; }
+  } catch (e) {
+    r.className="test-result err"; r.textContent = "✗ " + e.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // ── Main ──
 async function enterMain(){
   hideSplash();
   showView("mainView");
-  await refreshSidebar();
   $("brandHome").onclick = ()=>{ state.selected=null; refreshCenter(); };
   $("btnChangeFolder").onclick = ()=> showSetup();
   $("btnConfigIA").onclick = openConfigModal;
   $("btnPrompt").onclick = openPromptModal;
   $("modalClose").onclick = ()=> $("modal").classList.remove("visible");
   $("searchInput").oninput = ()=> renderSidebar($("searchInput").value.trim().toLowerCase());
+  try {
+    await refreshSidebar();
+  } catch (e) {
+    state.projects = [];
+    renderSidebar();
+    $("center").innerHTML = '<div class="center-msg"><div class="big">Não foi possível abrir o workspace</div><div class="small"></div></div>';
+    $("center").querySelector(".small").textContent = e.message;
+  }
 }
 async function refreshSidebar(){
   if (!state.workspace) return;
@@ -550,7 +580,7 @@ function openConfigModal(){
   const sel = $("mProvider");
   PROVIDER_OPTIONS.forEach(g=>{ const og=document.createElement("optgroup"); og.label=g.group; g.items.forEach(([v,l])=>{const o=document.createElement("option");o.value=v;o.textContent=l;og.appendChild(o);}); sel.appendChild(og); });
   sel.value = cfg.provider || "none";
-  const sync = ()=>{ const p=sel.value; $("mFields").style.display = p==="none"?"none":"block"; $("mEndpoint").value = PRESETS[p].endpoint || cfg.endpoint || ""; $("mModel").value = PRESETS[p].model || cfg.model || ""; };
+  const sync = ()=>{ const p=sel.value; const sameProvider=cfg.provider===p; $("mFields").style.display = p==="none"?"none":"block"; $("mEndpoint").value = sameProvider ? (cfg.endpoint || PRESETS[p].endpoint || "") : (PRESETS[p].endpoint || ""); $("mModel").value = sameProvider ? (cfg.model || PRESETS[p].model || "") : (PRESETS[p].model || ""); };
   sel.onchange = sync; sync();
   applySecurityState($("mSession"), $("mWarn"), state.config || { encryptionAvailable: true, sessionOnly: false });
   $("mTest").onclick = async ()=>{

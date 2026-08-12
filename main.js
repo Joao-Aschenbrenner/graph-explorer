@@ -7,7 +7,7 @@ import {
   webContents,
   Menu,
 } from "electron";
-import { promises as fsp, existsSync, readFileSync, writeFileSync } from "fs";
+import { promises as fsp, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { spawn } from "child_process";
@@ -21,6 +21,7 @@ const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
 let mainWindow = null;
 let sessionApiKey = null;
+let sessionProvider = null;
 let encryptionAvailable = false;
 let graphifyCaps = null;
 let activeJob = null;
@@ -47,10 +48,11 @@ function loadConfigFile() {
 }
 function saveSanitizedConfig(cfg) {
   const { apiKey, ...safe } = cfg;
+  mkdirSync(CONFIG_DIR, { recursive: true });
   writeFileSync(CONFIG_PATH, JSON.stringify(safe, null, 2));
 }
 async function resolveProviderKey(config) {
-  if (sessionApiKey) return sessionApiKey;
+  if (sessionApiKey && config?.provider === sessionProvider) return sessionApiKey;
   if (!config.encryptedCredential) return null;
   const encrypted = Buffer.from(config.encryptedCredential, "base64");
   try {
@@ -245,41 +247,66 @@ async function registerIpcHandlers() {
     const { encryptedCredential, apiKey, ...safe } = cfg;
     return {
       ...safe,
-      hasKey: Boolean(sessionApiKey) || (!!encryptedCredential && encryptionAvailable),
+      hasKey: Boolean(sessionApiKey && cfg.provider === sessionProvider) || (!!encryptedCredential && encryptionAvailable),
       encryptionAvailable,
     };
   });
 
   ipcMain.handle("config:save", async (_e, input) => {
     try {
+      input = input || {};
+      if (!input.workspace || !existsSync(input.workspace)) return { ok: false, error: "Workspace inválido" };
+      const provider = PROVIDERS[input.provider] ? input.provider : "none";
+      const previous = loadConfigFile();
       const requestedSessionOnly = Boolean(input.sessionOnly);
       const effectiveSessionOnly = requestedSessionOnly || !encryptionAvailable;
       const apiKey = typeof input.apiKey === "string" ? input.apiKey.trim() : "";
       const config = {
         workspace: input.workspace,
-        provider: input.provider,
-        endpoint: input.endpoint,
-        model: input.model,
+        provider,
+        endpoint: typeof input.endpoint === "string" ? input.endpoint.trim() : "",
+        model: typeof input.model === "string" ? input.model.trim() : "",
         sessionOnly: effectiveSessionOnly,
       };
-      if (apiKey) {
+
+      const sameProvider = previous.provider === provider;
+      const credential = apiKey || (sameProvider ? await resolveProviderKey(previous) : null);
+      if (provider === "none") {
+        sessionApiKey = null;
+        sessionProvider = null;
+      } else if (credential) {
         if (effectiveSessionOnly) {
-          sessionApiKey = apiKey;
-          delete config.encryptedCredential;
+          sessionApiKey = credential;
+          sessionProvider = provider;
         } else {
           sessionApiKey = null;
+          sessionProvider = null;
           let encBuf;
           if (typeof safeStorage.encryptStringAsync === "function") {
-            const enc = await safeStorage.encryptStringAsync(apiKey);
+            const enc = await safeStorage.encryptStringAsync(credential);
             encBuf = enc && enc.encrypted ? enc.encrypted : enc;
           } else {
-            encBuf = safeStorage.encryptString(apiKey);
+            encBuf = safeStorage.encryptString(credential);
           }
           config.encryptedCredential = Buffer.from(encBuf).toString("base64");
         }
+      } else if (!sameProvider) {
+        sessionApiKey = null;
+        sessionProvider = null;
       }
+
       saveSanitizedConfig(config);
-      return { ok: true, sessionOnly: effectiveSessionOnly, hasSessionCredential: Boolean(sessionApiKey), encryptionAvailable };
+      return {
+        ok: true,
+        workspace: config.workspace,
+        provider: config.provider,
+        endpoint: config.endpoint,
+        model: config.model,
+        sessionOnly: effectiveSessionOnly,
+        hasKey: Boolean(sessionApiKey) || Boolean(config.encryptedCredential),
+        hasSessionCredential: Boolean(sessionApiKey),
+        encryptionAvailable,
+      };
     } catch (e) {
       console.error("[config:save]", e);
       return { ok: false, error: e.message };
@@ -289,6 +316,7 @@ async function registerIpcHandlers() {
   ipcMain.handle("config:disable-ai", async (_e, input) => {
     try {
       sessionApiKey = null;
+      sessionProvider = null;
       const config = { workspace: input.workspace, provider: "none", endpoint: "", model: "", sessionOnly: true };
       saveSanitizedConfig(config);
       return { ok: true };
@@ -304,17 +332,52 @@ async function registerIpcHandlers() {
   });
 
   ipcMain.handle("provider:test", async (_e, config) => {
+    config = config || {};
     const p = PROVIDERS[config.provider];
     if (!p) return { ok: false, message: "Provedor desconhecido" };
     if (p.backend === null) return { ok: true, message: "Sem IA — análise local, nenhuma conexão necessária" };
-    const key = config.apiKey || sessionApiKey;
+    const persisted = loadConfigFile();
+    const suppliedKey = typeof config.apiKey === "string" ? config.apiKey.trim() : "";
+    const key = suppliedKey || (persisted.provider === config.provider ? await resolveProviderKey(persisted) : null);
     if (["openai", "deepseek", "kimi", "nvidia", "openrouter", "groq", "lmstudio", "vllm", "custom"].includes(config.provider)) {
       if (!config.endpoint) return { ok: false, message: "Informe o endpoint" };
+      if (["openai", "deepseek", "kimi", "nvidia", "openrouter", "groq"].includes(config.provider) && !key)
+        return { ok: false, message: "Informe uma chave de API" };
       try {
-        const r = await fetch(config.endpoint.replace(/\/$/, "") + "/models", { headers: { Authorization: "Bearer " + (key || "") } });
-        if (r.status === 200) return { ok: true, message: "Endpoint acessível, modelo listado" };
-        if (r.status === 401) return { ok: false, message: "Chave inválida (401)" };
-        return { ok: true, message: "Endpoint acessível (HTTP " + r.status + ")" };
+        const base = config.endpoint.replace(/\/$/, "");
+        const headers = key ? { Authorization: "Bearer " + key } : {};
+        const modelsResponse = await fetch(base + "/models", { headers, signal: AbortSignal.timeout(30000) });
+        if (!modelsResponse.ok) {
+          const authMessage = [401, 403].includes(modelsResponse.status) ? "Chave inválida" : "Falha no endpoint";
+          return { ok: false, message: `${authMessage} (HTTP ${modelsResponse.status})` };
+        }
+
+        const modelsPayload = await modelsResponse.json().catch(() => null);
+        const modelIds = Array.isArray(modelsPayload?.data) ? modelsPayload.data.map((m) => m.id).filter(Boolean) : [];
+        if (config.model && modelIds.length && !modelIds.includes(config.model))
+          return { ok: false, message: "Endpoint acessível, mas o modelo informado não está listado" };
+
+        if (config.provider === "nvidia") {
+          if (!config.model) return { ok: false, message: "Informe o modelo NVIDIA" };
+          const inferenceResponse = await fetch(base + "/chat/completions", {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(30000),
+            body: JSON.stringify({
+              model: config.model,
+              messages: [{ role: "user", content: "Reply only OK" }],
+              max_tokens: 2,
+              temperature: 0,
+            }),
+          });
+          if (!inferenceResponse.ok) {
+            const authMessage = [401, 403].includes(inferenceResponse.status) ? "Chave inválida" : "Falha na inferência";
+            return { ok: false, message: `${authMessage} (HTTP ${inferenceResponse.status})` };
+          }
+          return { ok: true, message: "Chave e modelo NVIDIA validados (inferência OK)" };
+        }
+
+        return { ok: true, message: config.model ? "Endpoint acessível, modelo listado" : "Endpoint acessível" };
       } catch (e) { return { ok: false, message: "Não foi possível conectar: " + e.message }; }
     }
     if (config.provider === "ollama") {
