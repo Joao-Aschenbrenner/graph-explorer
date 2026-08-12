@@ -229,6 +229,7 @@ async function runQa() {
 
     // ── GATES: primeira execução sem config ──
     await waitFor(qaWindow, "/^v\\d+\\.\\d+\\.\\d+/.test(document.getElementById('versionBadge').textContent)", 5000);
+    await waitFor(qaWindow, "getComputedStyle(document.getElementById('setupView')).display !== 'none' && document.getElementById('setupView').getBoundingClientRect().height > 0", 5000);
     const freshSetupRaw = await ev(qaWindow, `JSON.stringify({
       options: [...document.getElementById('providerSelect').options].map(o=>o.value),
       labels: [...document.getElementById('providerSelect').options].map(o=>o.textContent),
@@ -383,6 +384,49 @@ async function runQa() {
       `provider=${saveUi.provider} endpointOk=${saveUi.endpoint === providerFixture.endpoint} model=${saveUi.model}`);
     gate("SAVE_AND_OPEN", saveUi.main === true && saveUi.setup === false && saveUi.projects > 0,
       `main=${saveUi.main} setup=${saveUi.setup} projects=${saveUi.projects} button=${saveUi.button}`);
+
+    log("Test: VIEWPORT_TOGGLE");
+    const vpMainRaw = await withTimeout("VIEWPORT_TOGGLE", ev(qaWindow, `(async()=>{
+      const rectOf = (id) => { const b = document.getElementById(id).getBoundingClientRect(); return { top: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; };
+      const cs = (id) => getComputedStyle(document.getElementById(id)).display;
+      const centerOfMain = (() => { const el = document.elementFromPoint(innerWidth/2, innerHeight/2); let n = el, inMain = false; while (n) { if (n.id === 'mainView') inMain = true; n = n.parentElement; } return inMain; })();
+      return JSON.stringify({
+        mainDisplay: cs('mainView'), setupDisplay: cs('setupView'),
+        mainRect: rectOf('mainView'), setupRect: rectOf('setupView'),
+        centerInMain: centerOfMain,
+        viewportH: innerHeight
+      });
+    })()`), 30000);
+    const vpMain = normalizeResult(vpMainRaw) || {};
+    const setupUp = await ev(qaWindow, `(function(){const b=document.getElementById('btnChangeFolder');if(b)b.click();return 'ok';})()`).catch(() => "err");
+    await sleep(600);
+    const vpSetupRaw = await withTimeout("VIEWPORT_TOGGLE", ev(qaWindow, `(async()=>{
+      const rectOf = (id) => { const b = document.getElementById(id).getBoundingClientRect(); return { top: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; };
+      const cs = (id) => getComputedStyle(document.getElementById(id)).display;
+      const centerOfSetup = (() => { const el = document.elementFromPoint(innerWidth/2, innerHeight/2); let n = el, inSetup = false; while (n) { if (n.id === 'setupView') inSetup = true; n = n.parentElement; } return inSetup; })();
+      return JSON.stringify({
+        mainDisplay: cs('mainView'), setupDisplay: cs('setupView'),
+        mainRect: rectOf('mainView'), setupRect: rectOf('setupView'),
+        centerInSetup: centerOfSetup
+      });
+    })()`), 30000);
+    const vpSetup = normalizeResult(vpSetupRaw) || {};
+    const mainOccupies = vpMain.mainDisplay === "flex" && vpMain.setupDisplay === "none" && vpMain.mainRect.top === 0 && vpMain.mainRect.h >= vpMain.viewportH * 0.9 && vpMain.centerInMain === true;
+    const setupOccupies = vpSetup.setupDisplay === "flex" && vpSetup.mainDisplay === "none" && vpSetup.setupRect.top === 0 && vpSetup.setupRect.h >= 0.9 * (vpMain.viewportH || 800) && vpSetup.centerInSetup === true;
+    gate("VIEWPORT_TOGGLE", mainOccupies && setupOccupies,
+      `main:${vpMain.mainDisplay}/${vpMain.setupDisplay}/top${vpMain.mainRect.top}/h${vpMain.mainRect.h}/center${vpMain.centerInMain} setup:${vpSetup.setupDisplay}/${vpSetup.mainDisplay}/top${vpSetup.setupRect.top}/h${vpSetup.setupRect.h}/center${vpSetup.centerInSetup}`);
+    // voltar para mainView
+    const backToMain = await ev(qaWindow, `(async()=>{
+      document.getElementById('folderPath').textContent = state.workspace;
+      document.getElementById('btnSaveOpen').click();
+      const started=Date.now();
+      while(Date.now()-started<20000){
+        if(document.getElementById('mainView').classList.contains('visible')) break;
+        await new Promise(r=>setTimeout(r,100));
+      }
+      return document.getElementById('mainView').classList.contains('visible');
+    })()`).catch(() => false);
+    log("  voltou ao mainView: " + backToMain);
     gate("PROVIDER_CREDENTIAL_STORAGE",
       typeof providerCfg.encryptedCredential === "string" && providerCfg.encryptedCredential.length > 0 && !("apiKey" in providerCfg),
       `encrypted=${!!providerCfg.encryptedCredential} noPlain=${!("apiKey" in providerCfg)}`);

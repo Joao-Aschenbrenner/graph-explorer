@@ -45,12 +45,12 @@ main.js           processo principal (IPC, scan, jobs de graphify, safeStorage)
 preload.cjs       bridge IPC com contextIsolation + sandbox
 public/index.html UI (splash, setup, sidebar, webview, modais)
 assets/           ícones e logo
-ge-qa-full.mjs    suíte QA funcional (30 gates) — isolada via GE_CONFIG_DIR
+ge-qa-full.mjs    suíte QA funcional (31 gates) — isolada via GE_CONFIG_DIR
 ```
 
 ## Qualidade
 
-- 30 gates funcionais de QA cobrem: primeira execução com todos os provedores, versão/update API visíveis, startup/boot real, scan de workspace, geração/cancelamento/retomada de jobs, rejeição de chave inválida, validação de chave+modelo+inferência, contrato completo de save, fluxo `Salvar e abrir`, reutilização segura da credencial criptografada, credenciais de sessão vs persistidas, modo sem IA, isolamento do webview, cópia de prompt, ausência de porta 3456, ausência de caminhos hardcoded e zero processos órfãos.
+- 31 gates funcionais de QA cobrem: primeira execução com todos os provedores, versão/update API visíveis, startup/boot real, scan de workspace, geração/cancelamento/retomada de jobs, rejeição de chave inválida, validação de chave+modelo+inferência, contrato completo de save, fluxo `Salvar e abrir`, alternância real de viewport entre setup e main (gate `VIEWPORT_TOGGLE`), reutilização segura da credencial criptografada, credenciais de sessão vs persistidas, modo sem IA, isolamento do webview, cópia de prompt, ausência de porta 3456, ausência de caminhos hardcoded e zero processos órfãos.
 - O QA roda com diretório de configuração temporário (`GE_CONFIG_DIR`) e nunca toca o `config.json` real.
 
 ## Segurança
