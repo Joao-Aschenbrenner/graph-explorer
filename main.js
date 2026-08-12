@@ -14,7 +14,9 @@ import { spawn } from "child_process";
 import crypto from "crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CONFIG_DIR = process.env.GE_CONFIG_DIR || __dirname;
+// Em builds empacotados (portable/instalador), __dirname é um diretório temporário.
+// userData garante persistência real; GE_CONFIG_DIR (QA) continua com prioridade.
+const CONFIG_DIR = process.env.GE_CONFIG_DIR || app.getPath("userData");
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
 let mainWindow = null;
