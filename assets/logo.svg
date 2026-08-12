@@ -1,0 +1,37 @@
+<svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" width="160" height="160">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#58a6ff" stop-opacity=".6"/>
+      <stop offset="100%" stop-color="#58a6ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#58a6ff"/>
+      <stop offset="100%" stop-color="#1f6feb"/>
+    </radialGradient>
+  </defs>
+  <circle cx="80" cy="80" r="36" fill="url(#glow)"/>
+  <circle cx="80" cy="80" r="10" fill="url(#cg)"/>
+  <circle cx="80" cy="80" r="10" fill="none" stroke="#58a6ff" stroke-width=".5" opacity=".5"/>
+  <g stroke-width=".6">
+    <line x1="80" y1="80" x2="80" y2="38" stroke="#58a6ff" opacity=".3"/>
+    <line x1="80" y1="80" x2="131" y2="55" stroke="#a855f7" opacity=".2"/>
+    <line x1="80" y1="80" x2="122" y2="122" stroke="#58a6ff" opacity=".25"/>
+    <line x1="80" y1="80" x2="38" y2="122" stroke="#a855f7" opacity=".2"/>
+    <line x1="80" y1="80" x2="29" y2="55" stroke="#58a6ff" opacity=".3"/>
+    <circle cx="80" cy="38" r="3" fill="#58a6ff"/>
+    <circle cx="131" cy="55" r="2.5" fill="#a855f7"/>
+    <circle cx="122" cy="122" r="2.5" fill="#58a6ff"/>
+    <circle cx="38" cy="122" r="2" fill="#a855f7"/>
+    <circle cx="29" cy="55" r="2.5" fill="#58a6ff"/>
+  </g>
+  <g stroke-width=".5" opacity=".15">
+    <line x1="80" y1="80" x2="130" y2="38" stroke="#3fb950"/>
+    <line x1="80" y1="80" x2="130" y2="120" stroke="#3fb950"/>
+    <line x1="80" y1="80" x2="30" y2="38" stroke="#3fb950"/>
+    <line x1="80" y1="80" x2="30" y2="120" stroke="#3fb950"/>
+    <circle cx="130" cy="38" r="1.5" fill="#3fb950"/>
+    <circle cx="130" cy="120" r="1.5" fill="#3fb950"/>
+    <circle cx="30" cy="38" r="1.5" fill="#3fb950"/>
+    <circle cx="30" cy="120" r="1.5" fill="#3fb950"/>
+  </g>
+</svg>

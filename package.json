@@ -1,0 +1,13 @@
+{
+  "name": "graph-explorer",
+  "version": "1.0.0",
+  "main": "main.js",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^43.1.0"
+  }
+}

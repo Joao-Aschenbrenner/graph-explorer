@@ -1,0 +1,11 @@
+node_modules/
+dist/
+config.json
+qa.log
+*.log
+backup-*/
+graphify-out/
+ge-qa-target-*/
+.DS_Store
+Thumbs.db
+npm-debug.log*
