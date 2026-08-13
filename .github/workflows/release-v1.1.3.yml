@@ -1,0 +1,123 @@
+name: Release Graph Explorer v1.1.3
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-v1.1.3.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-release:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Apply v1.1.3 source patch
+        shell: pwsh
+        run: |
+          node scripts/apply-v113.mjs
+          node --check main.js
+          node --check preload.cjs
+
+      - name: Generate improved Windows icons
+        shell: pwsh
+        run: |
+          ./assets/build-icons.ps1
+          if (!(Test-Path "assets/icon.ico")) { throw "icon.ico ausente" }
+          if (!(Test-Path "assets/icon.png")) { throw "icon.png ausente" }
+
+      - name: Verify three status contract
+        shell: pwsh
+        run: |
+          $main = Get-Content main.js -Raw
+          $ui = Get-Content public/index.html -Raw
+          foreach ($status in @("no-graph","graph-no-ia","graph-with-ia")) {
+            if (!$main.Contains($status)) { throw "main.js sem status $status" }
+            if (!$ui.Contains($status)) { throw "index.html sem status $status" }
+          }
+          if (!$ui.Contains("statusSvg")) { throw "SVG de status não encontrado" }
+          if (!$main.Contains(".graphify_labels.json")) { throw "detecção IA por metadata ausente" }
+          if (!$main.Contains('ipcMain.handle("graphify:install"')) { throw "instalador Graphify ausente" }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build NSIS + portable
+        run: npx electron-builder --win nsis portable --publish never
+
+      - name: Validate release assets
+        shell: pwsh
+        run: |
+          $required = @(
+            "dist/Graph-Explorer-Setup-1.1.3.exe",
+            "dist/Graph-Explorer-Setup-1.1.3.exe.blockmap",
+            "dist/Graph-Explorer-1.1.3.exe",
+            "dist/latest.yml"
+          )
+          foreach ($f in $required) {
+            if (!(Test-Path $f)) { throw "Artefato ausente: $f" }
+          }
+
+      - name: Commit v1.1.3 source and icons
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.js preload.cjs public/index.html package.json package-lock.json assets/logo.svg assets/icon.png assets/icon.ico assets/splash-logo.png assets/build-icons.ps1
+          git commit -m "v1.1.3: three graph states, SVG status icons and Graphify install"
+          git push origin HEAD:main
+
+      - name: Tag v1.1.3
+        shell: pwsh
+        run: |
+          git tag -a v1.1.3 -m "Graph Explorer v1.1.3"
+          git push origin v1.1.3
+
+      - name: Publish GitHub release
+        shell: pwsh
+        run: |
+          @"
+          ## Graph Explorer v1.1.3
+
+          ### Status dos workspaces
+          - Vermelho: **sem grafo**
+          - Amarelo: **grafo criado, ainda sem otimização por IA**
+          - Verde: **grafo otimizado com IA**
+          - A sidebar agora lista todas as pastas imediatas do workspace.
+
+          ### Visual
+          - Emojis/bolinhas substituídos por ícones SVG semânticos.
+          - Logo do Graph Explorer renovado.
+          - Ícones Windows regenerados.
+
+          ### Graphify
+          - Detecção explícita de Graphify.
+          - Instalação assistida no Windows quando o CLI não está disponível.
+          - Ao gerar com IA configurada, a etapa de label é executada após o grafo.
+          - O status é recalculado após cada operação.
+
+          ### Atualização
+          O instalador Setup mantém auto-update. A versão portable continua sem auto-update.
+          "@ | Set-Content release-notes.md
+
+          gh release create v1.1.3 `
+            "dist/Graph-Explorer-Setup-1.1.3.exe" `
+            "dist/Graph-Explorer-Setup-1.1.3.exe.blockmap" `
+            "dist/Graph-Explorer-1.1.3.exe" `
+            "dist/latest.yml" `
+            --title "Graph Explorer v1.1.3" `
+            --notes-file release-notes.md `
+            --verify-tag
