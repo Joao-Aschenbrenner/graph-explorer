@@ -1,0 +1,172 @@
+name: Release Graph Explorer v1.1.4
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-v1.1.4.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Normalize source line endings
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          foreach ($file in @("main.js", "preload.cjs", "public/index.html")) {
+            $path = (Resolve-Path $file).Path
+            $text = [System.IO.File]::ReadAllText($path).Replace("`r`n", "`n")
+            [System.IO.File]::WriteAllText($path, $text, $utf8)
+          }
+
+      - name: Apply workspace and SVG feature patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          node scripts/apply-v113.mjs
+          if ($LASTEXITCODE -ne 0) { throw "apply-v113 falhou" }
+          node scripts/fix-v114-status.mjs
+          if ($LASTEXITCODE -ne 0) { throw "fix-v114-status falhou" }
+
+          # graphifyy é o pacote Python oficial; corrige o instalador criado pelo patch-base.
+          $main = Get-Content main.js -Raw
+          $old = 'spawn("npm", ["install", "-g", "graphifyy"], { windowsHide: true, shell: true });'
+          $new = 'spawn("uv", ["tool", "install", "graphifyy"], { windowsHide: true, shell: false });'
+          if (!$main.Contains($old)) { throw "Não encontrou instalador Graphify legado para corrigir" }
+          $main = $main.Replace($old, $new)
+          [System.IO.File]::WriteAllText((Resolve-Path "main.js").Path, $main, (New-Object System.Text.UTF8Encoding($false)))
+
+          node --check main.js
+          if ($LASTEXITCODE -ne 0) { throw "main.js inválido" }
+          node --check preload.cjs
+          if ($LASTEXITCODE -ne 0) { throw "preload.cjs inválido" }
+
+      - name: Generate improved Windows icons
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./assets/build-icons.ps1
+          foreach ($f in @("assets/icon.ico", "assets/icon.png", "assets/splash-logo.png", "assets/logo.svg")) {
+            if (!(Test-Path $f)) { throw "Artefato visual ausente: $f" }
+          }
+
+      - name: Verify three-state contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $main = Get-Content main.js -Raw
+          $ui = Get-Content public/index.html -Raw
+
+          foreach ($status in @("no-graph", "graph-no-ia", "graph-with-ia")) {
+            if (!$main.Contains($status)) { throw "main.js sem status $status" }
+            if (!$ui.Contains($status)) { throw "index.html sem status $status" }
+          }
+          if (!$ui.Contains("statusSvg")) { throw "Ícones SVG de status não encontrados" }
+          if ($ui.Contains('dot.has-graph') -or $ui.Contains('dot.no-graph')) { throw "Indicadores circulares antigos ainda presentes" }
+          if (!$main.Contains('.graphify_labels.json')) { throw "Leitura de labels Graphify ausente" }
+          if (!$main.Contains('every(hasSemanticName)')) { throw "Status verde não exige todas as comunidades nomeadas" }
+          if (!$main.Contains('graph.json')) { throw "Detecção de grafo sem graph.json" }
+          if (!$main.Contains('uv')) { throw "Instalação Graphify via uv ausente" }
+          if ((Get-Content package.json -Raw) -notmatch '"version"\s*:\s*"1\.1\.4"') { throw "Versão não é 1.1.4" }
+
+          # Bloqueia regressão do caminho local que derrubou a tentativa anterior.
+          if ((Get-Content assets/build-icons.ps1 -Raw).Contains('C:\Users\USUARIO')) { throw "build-icons.ps1 ainda contém caminho local hardcoded" }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build NSIS and portable
+        run: npx electron-builder --win nsis portable --publish never
+
+      - name: Validate release assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $required = @(
+            "dist/Graph-Explorer-Setup-1.1.4.exe",
+            "dist/Graph-Explorer-Setup-1.1.4.exe.blockmap",
+            "dist/Graph-Explorer-1.1.4.exe",
+            "dist/latest.yml"
+          )
+          foreach ($f in $required) {
+            if (!(Test-Path $f)) { throw "Artefato ausente: $f" }
+          }
+
+      - name: Commit v1.1.4 source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.js preload.cjs public/index.html package.json package-lock.json assets/logo.svg assets/icon.png assets/icon.ico assets/splash-logo.png assets/build-icons.ps1
+          git commit -m "v1.1.4: correct graph AI status and SVG indicators"
+          if ($LASTEXITCODE -ne 0) { throw "Commit falhou" }
+          git push origin HEAD:main
+          if ($LASTEXITCODE -ne 0) { throw "Push falhou" }
+
+      - name: Tag v1.1.4
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git tag -a v1.1.4 -m "Graph Explorer v1.1.4"
+          git push origin v1.1.4
+          if ($LASTEXITCODE -ne 0) { throw "Tag falhou" }
+
+      - name: Publish release v1.1.4
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @"
+          # Graph Explorer v1.1.4
+
+          Correção dos estados dos workspaces e atualização visual.
+
+          ## Três estados reais
+          - **Vermelho — Sem grafo:** não existe `graphify-out/graph.json` nem visualização válida.
+          - **Amarelo — Grafo sem IA:** o grafo existe, mas pelo menos uma comunidade ainda não possui nome semântico.
+          - **Verde — Grafo otimizado com IA:** todas as comunidades presentes no `graph.json` possuem nomes não genéricos.
+
+          O estado verde não depende mais apenas da existência de `.graphify_labels.json`; placeholders como `Community 3` continuam amarelos.
+
+          ## Interface
+          - Indicadores antigos substituídos por SVGs coloridos e semânticos.
+          - Legenda dos três estados adicionada à sidebar.
+          - Logo/splash e ícone Windows renovados.
+          - Todas as pastas imediatas do workspace são exibidas.
+
+          ## Graphify
+          - Geração com IA configurada pode concluir também a etapa de nomes.
+          - Graphify pode ser instalado pelo fluxo do app via pacote Python `graphifyy` usando `uv`.
+
+          ## Atualização
+          - Setup: mantém auto-update.
+          - Portable: continua sem auto-update.
+          "@ | Set-Content release-notes-v114.md
+
+          gh release create v1.1.4 `
+            "dist/Graph-Explorer-Setup-1.1.4.exe" `
+            "dist/Graph-Explorer-Setup-1.1.4.exe.blockmap" `
+            "dist/Graph-Explorer-1.1.4.exe" `
+            "dist/latest.yml" `
+            --title "Graph Explorer v1.1.4" `
+            --notes-file release-notes-v114.md `
+            --verify-tag
+          if ($LASTEXITCODE -ne 0) { throw "Publicação da release falhou" }
