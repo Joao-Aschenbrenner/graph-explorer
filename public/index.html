@@ -71,11 +71,16 @@ input:focus,select:focus{border-color:#58a6ff}
 .proj{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;cursor:pointer;transition:background .12s}
 .proj:hover{background:#161b22}
 .proj.active{background:#1f6feb22}
-.dot{width:9px;height:9px;border-radius:50%;flex:none}
-.dot.has-graph{background:#3fb950}
-.dot.no-graph{background:#484f58}
-.dot.processing{background:#d29922;animation:pulse 1s infinite}
-.dot.error{background:#f85149}
+.status-icon{width:18px;height:18px;min-width:18px;display:grid;place-items:center;flex:none}
+.status-icon svg{width:18px;height:18px;display:block;filter:drop-shadow(0 0 4px currentColor)}
+.status-icon.no-graph{color:#f85149}
+.status-icon.graph-no-ia{color:#d29922}
+.status-icon.graph-with-ia{color:#3fb950}
+.status-icon.processing{color:#58a6ff;animation:pulse 1s infinite}
+.status-icon.error{color:#f85149}
+.status-legend{margin:4px 4px 10px;padding:8px;border:1px solid #21262d;border-radius:8px;background:#0b0f14}
+.status-legend-row{display:flex;align-items:center;gap:7px;font-size:10px;color:#8b949e;line-height:1.45;margin:3px 0}
+.status-pill{font-size:9px;font-weight:700;letter-spacing:.2px;padding:2px 6px;border-radius:999px;border:1px solid currentColor;opacity:.92}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 .proj .name{font-size:13px;color:#c9d1d9;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .proj .acts{display:none;gap:4px}
@@ -120,47 +125,26 @@ webview{width:100%;height:100%;border:none;background:#0d1117}
 <!-- ── Splash ── -->
 <div id="splash">
   <div class="logo-wrap">
-    <svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" aria-label="Graph Explorer">
       <defs>
-        <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stop-color="#58a6ff" stop-opacity=".6"/>
-          <stop offset="100%" stop-color="#58a6ff" stop-opacity="0"/>
-        </radialGradient>
-        <radialGradient id="cg" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stop-color="#58a6ff"/><stop offset="100%" stop-color="#1f6feb"/>
-        </radialGradient>
+        <linearGradient id="geCore" x1="36" y1="28" x2="130" y2="134" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#58a6ff"/><stop offset=".5" stop-color="#a855f7"/><stop offset="1" stop-color="#3fb950"/>
+        </linearGradient>
+        <radialGradient id="geHalo"><stop stop-color="#58a6ff" stop-opacity=".28"/><stop offset="1" stop-color="#58a6ff" stop-opacity="0"/></radialGradient>
       </defs>
-      <circle cx="80" cy="80" r="36" fill="url(#glow)">
-        <animate attributeName="r" values="36;44;36" dur="3s" repeatCount="indefinite"/>
-        <animate attributeName="opacity" values=".6;.3;.6" dur="3s" repeatCount="indefinite"/>
-      </circle>
-      <circle cx="80" cy="80" r="10" fill="url(#cg)"/>
-      <circle cx="80" cy="80" r="10" fill="none" stroke="#58a6ff" stroke-width=".5" opacity=".5">
-        <animate attributeName="r" values="10;24;10" dur="2s" repeatCount="indefinite"/>
-        <animate attributeName="opacity" values=".5;0;.5" dur="2s" repeatCount="indefinite"/>
-      </circle>
-      <g>
-        <animateTransform attributeName="transform" type="rotate" from="0 80 80" to="360 80 80" dur="12s" repeatCount="indefinite"/>
-        <line x1="80" y1="80" x2="80" y2="38" stroke="#58a6ff" stroke-width=".6" opacity=".3"/>
-        <line x1="80" y1="80" x2="131" y2="55" stroke="#a855f7" stroke-width=".6" opacity=".2"/>
-        <line x1="80" y1="80" x2="122" y2="122" stroke="#58a6ff" stroke-width=".6" opacity=".25"/>
-        <line x1="80" y1="80" x2="38" y2="122" stroke="#a855f7" stroke-width=".6" opacity=".2"/>
-        <line x1="80" y1="80" x2="29" y2="55" stroke="#58a6ff" stroke-width=".6" opacity=".3"/>
-        <circle cx="80" cy="38" r="3" fill="#58a6ff"><animate attributeName="r" values="2;3.5;2" dur="2.4s" repeatCount="indefinite"/></circle>
-        <circle cx="131" cy="55" r="2.5" fill="#a855f7"><animate attributeName="r" values="2;3.5;2" dur="2s" repeatCount="indefinite"/></circle>
-        <circle cx="122" cy="122" r="2.5" fill="#58a6ff"><animate attributeName="r" values="2.5;3.5;2.5" dur="1.8s" repeatCount="indefinite"/></circle>
-        <circle cx="38" cy="122" r="2" fill="#a855f7"><animate attributeName="r" values="1.5;3;1.5" dur="2.2s" repeatCount="indefinite"/></circle>
-        <circle cx="29" cy="55" r="2.5" fill="#58a6ff"><animate attributeName="r" values="2;3.5;2" dur="2.6s" repeatCount="indefinite"/></circle>
+      <circle cx="80" cy="80" r="60" fill="url(#geHalo)"><animate attributeName="r" values="54;64;54" dur="3.8s" repeatCount="indefinite"/></circle>
+      <g stroke-linecap="round">
+        <path d="M80 80L43 42M80 80L117 42M80 80L132 82M80 80L116 123M80 80L45 122M80 80L28 80" stroke="#58a6ff" stroke-opacity=".36" stroke-width="1.5"/>
+        <path d="M43 42L117 42M117 42L132 82M132 82L116 123M116 123L45 122M45 122L28 80M28 80L43 42" stroke="#a855f7" stroke-opacity=".2"/>
       </g>
-      <g>
-        <animateTransform attributeName="transform" type="rotate" from="360 80 80" to="0 80 80" dur="18s" repeatCount="indefinite"/>
-        <line x1="80" y1="80" x2="130" y2="38" stroke="#3fb950" stroke-width=".5" opacity=".15"/>
-        <line x1="80" y1="80" x2="130" y2="120" stroke="#3fb950" stroke-width=".5" opacity=".15"/>
-        <line x1="80" y1="80" x2="30" y2="38" stroke="#3fb950" stroke-width=".5" opacity=".15"/>
-        <line x1="80" y1="80" x2="30" y2="120" stroke="#3fb950" stroke-width=".5" opacity=".15"/>
-        <circle cx="130" cy="38" r="1.5" fill="#3fb950"/><circle cx="130" cy="120" r="1.5" fill="#3fb950"/>
-        <circle cx="30" cy="38" r="1.5" fill="#3fb950"/><circle cx="30" cy="120" r="1.5" fill="#3fb950"/>
+      <g fill="#0a0a1a" stroke-width="2.5">
+        <circle cx="43" cy="42" r="6" stroke="#a855f7"/><circle cx="117" cy="42" r="6" stroke="#58a6ff"/>
+        <circle cx="132" cy="82" r="5" stroke="#3fb950"/><circle cx="116" cy="123" r="6" stroke="#a855f7"/>
+        <circle cx="45" cy="122" r="5" stroke="#3fb950"/><circle cx="28" cy="80" r="5" stroke="#58a6ff"/>
       </g>
+      <circle cx="80" cy="80" r="17" fill="#0a0a1a" stroke="url(#geCore)" stroke-width="4"/>
+      <path d="M70 77l8 8 15-18" fill="none" stroke="url(#geCore)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="80" cy="80" r="25" fill="none" stroke="#58a6ff" stroke-opacity=".35"><animate attributeName="r" values="22;30;22" dur="2.4s" repeatCount="indefinite"/><animate attributeName="opacity" values=".4;0;.4" dur="2.4s" repeatCount="indefinite"/></circle>
     </svg>
   </div>
   <div class="logo-title"><h1>Graph Explorer</h1><p>Visualizador de Grafos de Código</p></div>
@@ -222,6 +206,7 @@ webview{width:100%;height:100%;border:none;background:#0d1117}
     </div>
 
     <div class="warn-note hidden" id="safeWarn"></div>
+    <div class="warn-note hidden" id="graphifyWarn"></div>
 
     <div class="actions">
       <button class="btn sec" id="btnContinueNoIA">Continuar sem IA</button>
@@ -234,14 +219,12 @@ webview{width:100%;height:100%;border:none;background:#0d1117}
 <div class="view" id="mainView">
   <div class="header">
     <div class="brand" id="brandHome">
-      <svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="11" cy="11" r="3" fill="#58a6ff"/><circle cx="4" cy="5" r="1.8" fill="#a855f7"/>
-        <circle cx="18" cy="5" r="1.8" fill="#3fb950"/><circle cx="4" cy="17" r="1.8" fill="#3fb950"/>
-        <circle cx="18" cy="17" r="1.8" fill="#a855f7"/>
-        <line x1="11" y1="11" x2="4" y2="5" stroke="#a855f7" stroke-width=".5" opacity=".4"/>
-        <line x1="11" y1="11" x2="18" y2="5" stroke="#3fb950" stroke-width=".5" opacity=".4"/>
-        <line x1="11" y1="11" x2="4" y2="17" stroke="#3fb950" stroke-width=".5" opacity=".4"/>
-        <line x1="11" y1="11" x2="18" y2="17" stroke="#a855f7" stroke-width=".5" opacity=".4"/>
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M12 12L5 5M12 12l7-7M12 12l7 7M12 12l-7 7" stroke="#58a6ff" stroke-width="1.2" opacity=".55"/>
+        <circle cx="5" cy="5" r="2.2" fill="#a855f7"/><circle cx="19" cy="5" r="2.2" fill="#58a6ff"/>
+        <circle cx="19" cy="19" r="2.2" fill="#3fb950"/><circle cx="5" cy="19" r="2.2" fill="#a855f7"/>
+        <circle cx="12" cy="12" r="4" fill="#0d1117" stroke="#58a6ff" stroke-width="1.7"/>
+        <path d="M10.3 12l1.15 1.2 2.45-2.7" fill="none" stroke="#3fb950" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       Graph Explorer
     </div>
@@ -324,6 +307,9 @@ api.onGraphifyEvent(handleEvent);
     state.config = cfg;
   } catch {}
   try { state.graphify = await api.detectGraphify(); } catch {}
+  if (state.graphify && !state.graphify.installed) {
+    $("splashMsg").textContent = "Graphify não encontrado — você poderá instalá-lo no setup";
+  }
   setTimeout(() => {
     if (state.workspace && state.graphify && state.graphify.installed) enterMain();
     else showSetup();
@@ -394,6 +380,29 @@ function showSetup(){
   $("folderPath").textContent = state.workspace || "nenhuma pasta selecionada";
   refreshSaveBtn();
   applySecurityState($("sessionOnly"), $("safeWarn"), state.config || { encryptionAvailable: true, sessionOnly: false });
+  const graphifyWarn = $("graphifyWarn");
+  if (state.graphify && !state.graphify.installed) {
+    graphifyWarn.classList.remove("hidden");
+    graphifyWarn.innerHTML = '⚠ Graphify é necessário para gerar/atualizar grafos. <button class="btn sec" id="btnInstallGraphify" style="margin-left:8px;padding:5px 9px">Instalar Graphify</button>';
+    setTimeout(()=>{
+      const b=$("btnInstallGraphify");
+      if (b) b.onclick = async ()=>{
+        b.disabled=true; b.textContent="Instalando...";
+        const res = await api.installGraphify();
+        if (res && res.ok) {
+          state.graphify = res.caps;
+          graphifyWarn.textContent = "✓ Graphify instalado: " + (res.caps.version || "ok");
+          graphifyWarn.style.color = "#3fb950";
+        } else {
+          graphifyWarn.textContent = "✗ Falha ao instalar Graphify: " + ((res && (res.error || res.message)) || "erro");
+          graphifyWarn.style.color = "#f85149";
+        }
+      };
+    },0);
+  } else {
+    graphifyWarn.classList.add("hidden");
+    graphifyWarn.textContent = "";
+  }
   showView("setupView");
   $("btnSelectFolder").onclick = async ()=>{
     const p = await api.selectWorkspace();
@@ -479,6 +488,20 @@ async function refreshSidebar(){
   state.projects = data.projects || [];
   renderSidebar();
 }
+function statusSvg(status){
+  if (status === "graph-with-ia") return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3l7 4v5c0 4.4-2.9 7.5-7 9-4.1-1.5-7-4.6-7-9V7l7-4z" stroke="currentColor" stroke-width="1.8"/><path d="m8.4 12.1 2.2 2.2 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>`;
+  if (status === "graph-no-ia") return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.2 21 20H3L12 3.2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 14.8h6M9.8 12l2.2-2 2.2 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="9" cy="14.8" r="1.25" fill="currentColor"/><circle cx="15" cy="14.8" r="1.25" fill="currentColor"/><circle cx="12" cy="10" r="1.25" fill="currentColor"/></svg>`;
+  if (status === "processing") return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 5v5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  if (status === "error") return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5v6M12 17h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+  return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.2 21 20H3L12 3.2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 8.5v5M12 16.8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+}
+function statusMeta(status){
+  if (status === "graph-with-ia") return ["Grafo otimizado com IA", "graph-with-ia"];
+  if (status === "graph-no-ia") return ["Grafo criado · falta otimizar com IA", "graph-no-ia"];
+  if (status === "processing") return ["Processando", "processing"];
+  if (status === "error") return ["Erro ao analisar pasta", "error"];
+  return ["Sem grafo", "no-graph"];
+}
 function renderSidebar(filter){
   const sb = $("sidebar");
   sb.innerHTML = "";
@@ -486,21 +509,42 @@ function renderSidebar(filter){
   sb.appendChild(label);
   const path = document.createElement("div"); path.className="ws-path"; path.textContent = state.workspace;
   sb.appendChild(path);
+
+  const legend = document.createElement("div");
+  legend.className = "status-legend";
+  [
+    ["no-graph","Sem grafo"],
+    ["graph-no-ia","Grafo sem otimização IA"],
+    ["graph-with-ia","Grafo otimizado com IA"],
+  ].forEach(([status,text])=>{
+    const row=document.createElement("div"); row.className="status-legend-row";
+    const icon=document.createElement("span"); icon.className="status-icon "+status; icon.innerHTML=statusSvg(status);
+    const desc=document.createElement("span"); desc.textContent=text;
+    row.appendChild(icon); row.appendChild(desc); legend.appendChild(row);
+  });
+  sb.appendChild(legend);
+
   const list = state.projects.filter(p => !filter || p.name.toLowerCase().includes(filter));
-  if (!list.length){ const e=document.createElement("div"); e.className="ws-path"; e.textContent="nenhum projeto encontrado"; sb.appendChild(e); }
+  if (!list.length){ const e=document.createElement("div"); e.className="ws-path"; e.textContent="nenhuma pasta encontrada"; sb.appendChild(e); }
   list.forEach(p=>{
     const el = document.createElement("div"); el.className="proj" + (state.selected===p.path?" active":"");
-    const dot = document.createElement("div"); dot.className="dot " + (p.status==="processing"?"processing":p.status);
-    const name = document.createElement("div"); name.className="name"; name.textContent=p.name;
+    el.dataset.projectPath = p.path;
+    const [statusLabel, statusClass] = statusMeta(p.status);
+    const icon = document.createElement("div"); icon.className="status-icon "+statusClass; icon.innerHTML=statusSvg(p.status); icon.title=statusLabel;
+    const name = document.createElement("div"); name.className="name"; name.textContent=p.name; name.title=p.name+" · "+statusLabel;
     const acts = document.createElement("div"); acts.className="acts";
-    if (p.status==="has-graph"){
+    if (p.status==="graph-with-ia"){
       acts.appendChild(mini("Atualizar", ()=>runOp(p,"update")));
       acts.appendChild(mini("Nomes", ()=>runOp(p,"relabel")));
+      acts.appendChild(mini("Reagrupar", ()=>runOp(p,"recluster")));
+    } else if (p.status==="graph-no-ia"){
+      acts.appendChild(mini("Atualizar", ()=>runOp(p,"update")));
+      acts.appendChild(mini("Otimizar IA", ()=>runOp(p,"relabel")));
       acts.appendChild(mini("Reagrupar", ()=>runOp(p,"recluster")));
     } else if (p.status==="no-graph"){
       acts.appendChild(mini("Gerar", ()=>runOp(p,"generate")));
     }
-    el.appendChild(dot); el.appendChild(name); el.appendChild(acts);
+    el.appendChild(icon); el.appendChild(name); el.appendChild(acts);
     el.onclick = ()=> selectProject(p);
     sb.appendChild(el);
   });
@@ -516,14 +560,25 @@ function refreshCenter(){
   const p = state.projects.find(x=>x.path===state.selected);
   const c = $("center");
   if (!p){ c.innerHTML = '<div class="center-msg"><div class="big">Selecione um projeto na lateral</div></div>'; return; }
-  if (p.status==="has-graph" && p.graphUrl){
+
+  if ((p.status==="graph-with-ia" || p.status==="graph-no-ia") && p.graphUrl){
     openGraph(p);
-  } else if (p.status==="no-graph"){
-    c.innerHTML = '<div class="center-msg"><div class="big">Este projeto ainda não possui grafo</div><div class="small">O Graphify analisa o código e gera a visualização.</div><button class="btn" style="margin-top:14px" id="genBtn">Gerar grafo</button></div>';
-    $("genBtn").onclick = ()=>runOp(p,"generate");
-  } else {
-    c.innerHTML = '<div class="center-msg"><div class="big">'+p.name+'</div><div class="small">'+p.status+'</div></div>';
+    return;
   }
+
+  if ((p.status==="graph-with-ia" || p.status==="graph-no-ia") && !p.graphUrl){
+    c.innerHTML = '<div class="center-msg"><div class="big">Grafo encontrado, mas a visualização HTML não existe</div><div class="small">Os dados graph.json foram detectados. Gere/atualize a visualização com o Graphify.</div><button class="btn" style="margin-top:14px" id="updateGraphBtn">Atualizar grafo</button></div>';
+    $("updateGraphBtn").onclick = ()=>runOp(p,"update");
+    return;
+  }
+
+  if (p.status==="no-graph"){
+    c.innerHTML = '<div class="center-msg"><div class="big">Esta pasta ainda não possui grafo</div><div class="small">O Graphify analisa o código e gera a visualização. Se a IA estiver configurada, os nomes também serão otimizados.</div><button class="btn" style="margin-top:14px" id="genBtn">Gerar grafo</button></div>';
+    $("genBtn").onclick = ()=>runOp(p,"generate");
+    return;
+  }
+
+  c.innerHTML = '<div class="center-msg"><div class="big">'+p.name+'</div><div class="small">'+p.status+'</div></div>';
 }
 function openGraph(p){
   const c = $("center");

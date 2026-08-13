@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("graphExplorer", {
 
   detectGraphify: () => ipcRenderer.invoke("graphify:detect"),
 
+  installGraphify: () => ipcRenderer.invoke("graphify:install"),
+
   testProvider: (config) => ipcRenderer.invoke("provider:test", config),
 
   runGraphify: (request) => ipcRenderer.invoke("graphify:run", request),

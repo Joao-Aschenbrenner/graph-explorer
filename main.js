@@ -205,9 +205,10 @@ async function probeGraphify() {
     caps.clusterOnly = /cluster-only/.test(help);
     caps.label = /label/.test(help);
     try { caps.update = /update/.test(await runCapture(["update", "--help"])); } catch { caps.update = false; }
+    caps.installable = false;
     return caps;
   } catch {
-    return { installed: false, version: null, update: false, extract: false, clusterOnly: false, label: false };
+    return { installed: false, version: null, update: false, extract: false, clusterOnly: false, label: false, installable: process.platform === "win32" };
   }
 }
 function runCapture(args) {
@@ -222,32 +223,109 @@ function runCapture(args) {
 }
 
 // ── Workspace scan ────────────────────────────────────────────
-const MARKERS = [
-  ".git", "package.json", "pyproject.toml", "requirements.txt", "setup.py",
-  "Cargo.toml", "go.mod", "pom.xml", "build.gradle", "composer.json",
-  ".sln", ".csproj", "Dockerfile", "graphify-out",
-];
+const IGNORE_DIRS = new Set([
+  "node_modules", ".git", "venv", ".venv", "dist", "build", "target",
+  "__pycache__", ".idea", ".vscode", "coverage"
+]);
+
 function graphHtmlPath(p) { return join(p, "graphify-out", "graph.html"); }
+function graphJsonPath(p) { return join(p, "graphify-out", "graph.json"); }
+
+async function fileHasUsefulContent(file) {
+  try {
+    const st = await fsp.stat(file);
+    if (!st.isFile() || st.size < 3) return false;
+    const text = await fsp.readFile(file, "utf8");
+    if (!text.trim()) return false;
+    try {
+      const data = JSON.parse(text);
+      if (Array.isArray(data)) return data.length > 0;
+      if (data && typeof data === "object") return Object.keys(data).length > 0;
+    } catch {}
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function hasAiOptimization(projectPath) {
+  let graphData = null;
+  try {
+    graphData = JSON.parse(await fsp.readFile(graphJsonPath(projectPath), "utf8"));
+  } catch {
+    return false;
+  }
+
+  const communityIds = new Set();
+  const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+  for (const node of nodes) {
+    if (node?.community !== undefined && node?.community !== null) communityIds.add(String(node.community));
+  }
+  if (!communityIds.size) return false;
+
+  const labels = {};
+  if (graphData?.community_labels && typeof graphData.community_labels === "object") {
+    Object.assign(labels, graphData.community_labels);
+  }
+
+  for (const file of [
+    join(projectPath, "graphify-out", ".graphify_labels.json"),
+    join(projectPath, ".graphify_labels.json"),
+  ]) {
+    try {
+      const parsed = JSON.parse(await fsp.readFile(file, "utf8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        Object.assign(labels, parsed);
+        break;
+      }
+    } catch {}
+  }
+
+  const hasSemanticName = (id) => {
+    const value = labels[id] ?? labels[Number(id)];
+    if (typeof value !== "string" || !value.trim()) return false;
+    return !/^Community\s+\d+$/i.test(value.trim());
+  };
+
+  return [...communityIds].every(hasSemanticName);
+}
+
+async function inspectWorkspaceFolder(name, p) {
+  const graphJson = graphJsonPath(p);
+  const graphHtml = graphHtmlPath(p);
+  const hasGraph = existsSync(graphJson) || existsSync(graphHtml);
+  let status = "no-graph";
+  if (hasGraph) status = (await hasAiOptimization(p)) ? "graph-with-ia" : "graph-no-ia";
+  return {
+    name,
+    path: p,
+    status,
+    graphUrl: existsSync(graphHtml) ? pathToFileURL(graphHtml).href : null,
+    hasGraphJson: existsSync(graphJson),
+    hasGraphHtml: existsSync(graphHtml),
+  };
+}
 
 async function scanWorkspace(root) {
   const projects = [];
-  const consider = async (name, p) => {
-    let isProject = false, status = "no-graph", graphUrl = null;
-    try {
-      const entries = await fsp.readdir(p, { withFileTypes: true });
-      if (entries.some((e) => MARKERS.includes(e.name))) isProject = true;
-      const gh = graphHtmlPath(p);
-      if (existsSync(gh)) { status = "has-graph"; graphUrl = pathToFileURL(gh).href; isProject = true; }
-    } catch { return; }
-    if (isProject) projects.push({ name, path: p, status, graphUrl });
-  };
-  await consider(root.split(/[\\/]/).pop(), root);
   let dirs = [];
-  try { dirs = (await fsp.readdir(root, { withFileTypes: true })).filter((e) => e.isDirectory()); } catch {}
-  for (const d of dirs) {
-    if (["node_modules", ".git", "venv", ".venv", "dist", "build", "target"].includes(d.name)) continue;
-    await consider(d.name, join(root, d.name));
+  try {
+    dirs = (await fsp.readdir(root, { withFileTypes: true }))
+      .filter((e) => e.isDirectory() && !IGNORE_DIRS.has(e.name));
+  } catch {
+    return { root, projects };
   }
+
+  // O Explorer mostra TODAS as pastas imediatas do workspace, não só repositórios.
+  for (const d of dirs) {
+    try {
+      projects.push(await inspectWorkspaceFolder(d.name, join(root, d.name)));
+    } catch {
+      projects.push({ name: d.name, path: join(root, d.name), status: "error", graphUrl: null });
+    }
+  }
+
+  projects.sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }));
   return { root, projects };
 }
 
@@ -261,18 +339,29 @@ function killTree(pid) {
 }
 function buildSteps(operation, labelCfg) {
   const steps = [];
+  const p = PROVIDERS[labelCfg.provider];
+  const labelStep = () => ({
+    name: "Otimizando nomes das comunidades com IA (" + p.label + ")",
+    args: ["label", ".", "--backend", p.backend, "--missing-only"],
+    env: labelCfg.env,
+  });
+
   if (operation === "generate") {
     steps.push({ name: "Extraindo estrutura do código (AST)", args: ["extract", ".", "--code-only"] });
     steps.push({ name: "Agrupando comunidades", args: ["cluster-only", "."] });
+    if (labelCfg.canLabel && p && p.backend) steps.push(labelStep());
   } else if (operation === "update") {
-    if (graphifyCaps && graphifyCaps.update) steps.push({ name: "Atualizando grafo", args: ["update", "."] });
-    else { steps.push({ name: "Extraindo estrutura do código (AST)", args: ["extract", ".", "--code-only"] }); steps.push({ name: "Agrupando comunidades", args: ["cluster-only", "."] }); }
+    if (graphifyCaps && graphifyCaps.update) {
+      steps.push({ name: "Atualizando grafo", args: ["update", "."] });
+    } else {
+      steps.push({ name: "Extraindo estrutura do código (AST)", args: ["extract", ".", "--code-only"] });
+      steps.push({ name: "Agrupando comunidades", args: ["cluster-only", "."] });
+    }
   } else if (operation === "recluster") {
     steps.push({ name: "Reagrupando comunidades", args: ["cluster-only", "."] });
   } else if (operation === "relabel") {
-    const p = PROVIDERS[labelCfg.provider];
     if (!p || !p.backend) throw new Error("Provedor sem backend de IA");
-    steps.push({ name: "Nomeando comunidades com IA (" + p.label + ")", args: ["label", ".", "--backend", p.backend, "--missing-only"], env: labelCfg.env });
+    steps.push(labelStep());
   }
   return steps;
 }
@@ -412,6 +501,25 @@ async function registerIpcHandlers() {
     return graphifyCaps;
   });
 
+  ipcMain.handle("graphify:install", async () => {
+    if (process.platform !== "win32") return { ok: false, error: "Instalação automática disponível apenas no Windows nesta versão." };
+    try {
+      await new Promise((resolve, reject) => {
+        const child = spawn("uv", ["tool", "install", "graphifyy"], { windowsHide: true, shell: false });
+        let output = "";
+        child.stdout.on("data", (d) => (output += d.toString()));
+        child.stderr.on("data", (d) => (output += d.toString()));
+        child.on("error", reject);
+        child.on("close", (code) => code === 0 ? resolve(output) : reject(new Error(output || "npm saiu com código " + code)));
+      });
+      graphifyCaps = await probeGraphify();
+      return { ok: graphifyCaps.installed, caps: graphifyCaps, message: graphifyCaps.installed ? "Graphify instalado com sucesso." : "A instalação terminou, mas o comando graphify ainda não foi encontrado." };
+    } catch (e) {
+      graphifyCaps = await probeGraphify();
+      return { ok: false, caps: graphifyCaps, error: e.message };
+    }
+  });
+
   ipcMain.handle("provider:test", async (_e, config) => {
     config = config || {};
     const p = PROVIDERS[config.provider];
@@ -484,6 +592,8 @@ async function registerIpcHandlers() {
       endpoint: endpoint || cfg.endpoint,
       model: model || cfg.model,
       env: labelEnv(provider || cfg.provider || "none", { endpoint: endpoint || cfg.endpoint, model: model || cfg.model }, providerKey),
+      canLabel: (provider || cfg.provider || "none") !== "none" &&
+        (Boolean(providerKey) || (provider || cfg.provider) === "ollama"),
     };
     if (operation === "relabel" && (!providerKey || labelCfg.provider === "none"))
       return { jobId: null, error: "Informe um provedor de IA com chave para melhorar nomes" };

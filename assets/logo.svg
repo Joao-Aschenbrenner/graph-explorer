@@ -1,37 +1,20 @@
-<svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" width="160" height="160">
-  <defs>
-    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#58a6ff" stop-opacity=".6"/>
-      <stop offset="100%" stop-color="#58a6ff" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="cg" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#58a6ff"/>
-      <stop offset="100%" stop-color="#1f6feb"/>
-    </radialGradient>
-  </defs>
-  <circle cx="80" cy="80" r="36" fill="url(#glow)"/>
-  <circle cx="80" cy="80" r="10" fill="url(#cg)"/>
-  <circle cx="80" cy="80" r="10" fill="none" stroke="#58a6ff" stroke-width=".5" opacity=".5"/>
-  <g stroke-width=".6">
-    <line x1="80" y1="80" x2="80" y2="38" stroke="#58a6ff" opacity=".3"/>
-    <line x1="80" y1="80" x2="131" y2="55" stroke="#a855f7" opacity=".2"/>
-    <line x1="80" y1="80" x2="122" y2="122" stroke="#58a6ff" opacity=".25"/>
-    <line x1="80" y1="80" x2="38" y2="122" stroke="#a855f7" opacity=".2"/>
-    <line x1="80" y1="80" x2="29" y2="55" stroke="#58a6ff" opacity=".3"/>
-    <circle cx="80" cy="38" r="3" fill="#58a6ff"/>
-    <circle cx="131" cy="55" r="2.5" fill="#a855f7"/>
-    <circle cx="122" cy="122" r="2.5" fill="#58a6ff"/>
-    <circle cx="38" cy="122" r="2" fill="#a855f7"/>
-    <circle cx="29" cy="55" r="2.5" fill="#58a6ff"/>
-  </g>
-  <g stroke-width=".5" opacity=".15">
-    <line x1="80" y1="80" x2="130" y2="38" stroke="#3fb950"/>
-    <line x1="80" y1="80" x2="130" y2="120" stroke="#3fb950"/>
-    <line x1="80" y1="80" x2="30" y2="38" stroke="#3fb950"/>
-    <line x1="80" y1="80" x2="30" y2="120" stroke="#3fb950"/>
-    <circle cx="130" cy="38" r="1.5" fill="#3fb950"/>
-    <circle cx="130" cy="120" r="1.5" fill="#3fb950"/>
-    <circle cx="30" cy="38" r="1.5" fill="#3fb950"/>
-    <circle cx="30" cy="120" r="1.5" fill="#3fb950"/>
-  </g>
+<svg width="512" height="512" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <linearGradient id="core" x1="36" y1="28" x2="130" y2="134" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#58A6FF"/><stop offset=".5" stop-color="#A855F7"/><stop offset="1" stop-color="#3FB950"/>
+  </linearGradient>
+  <radialGradient id="halo"><stop stop-color="#58A6FF" stop-opacity=".24"/><stop offset="1" stop-color="#58A6FF" stop-opacity="0"/></radialGradient>
+</defs>
+<circle cx="80" cy="80" r="65" fill="url(#halo)"/>
+<g stroke-linecap="round">
+  <path d="M80 80L43 42M80 80L117 42M80 80L132 82M80 80L116 123M80 80L45 122M80 80L28 80" stroke="#58A6FF" stroke-opacity=".5" stroke-width="1.8"/>
+  <path d="M43 42L117 42M117 42L132 82M132 82L116 123M116 123L45 122M45 122L28 80M28 80L43 42" stroke="#A855F7" stroke-opacity=".24" stroke-width="1.2"/>
+</g>
+<g fill="#0D1117" stroke-width="3">
+  <circle cx="43" cy="42" r="7" stroke="#A855F7"/><circle cx="117" cy="42" r="7" stroke="#58A6FF"/>
+  <circle cx="132" cy="82" r="6" stroke="#3FB950"/><circle cx="116" cy="123" r="7" stroke="#A855F7"/>
+  <circle cx="45" cy="122" r="6" stroke="#3FB950"/><circle cx="28" cy="80" r="6" stroke="#58A6FF"/>
+</g>
+<circle cx="80" cy="80" r="20" fill="#0D1117" stroke="url(#core)" stroke-width="5"/>
+<path d="M68 78l9 9 17-20" stroke="url(#core)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
