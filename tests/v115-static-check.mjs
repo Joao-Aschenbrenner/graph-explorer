@@ -12,7 +12,7 @@ for (const needle of [
   "mistral",
   'ipcMain.handle("provider:models"',
   'ipcMain.handle("graph:data"',
-  'new Worker(join(__dirname, "public", "graph-data-worker.cjs"',
+  "graph-data-worker.cjs",
   "fetchProviderModels",
   "openCodeGraphifyCompatible",
 ]) assert.ok(main.includes(needle), `main.js sem contrato: ${needle}`);
@@ -33,6 +33,9 @@ for (const needle of [
 
 assert.equal(pkg.version, "1.1.5");
 assert.ok(pkg.build.files.includes("public/**/*"), "build precisa incluir worker/viewer em public/**/*");
+if (Array.isArray(pkg.build.asarUnpack)) {
+  assert.ok(pkg.build.asarUnpack.includes("public/graph-data-worker.cjs"), "worker precisa ficar em asarUnpack");
+}
 
 for (const status of ["no-graph", "graph-no-ia", "graph-with-ia"]) {
   assert.ok(main.includes(status), `main perdeu status ${status}`);
