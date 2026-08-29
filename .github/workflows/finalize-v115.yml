@@ -6,6 +6,7 @@ on:
       - feat/large-graph-model-picker
     paths:
       - .github/workflows/finalize-v115.yml
+      - scripts/patch-qa-v115.mjs
 
 permissions:
   contents: write
