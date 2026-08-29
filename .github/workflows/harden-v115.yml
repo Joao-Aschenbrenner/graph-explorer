@@ -6,6 +6,8 @@ on:
       - feat/large-graph-model-picker
     paths:
       - .github/workflows/harden-v115.yml
+      - tests/v115-static-check.mjs
+      - scripts/harden-v115.mjs
 
 permissions:
   contents: write
