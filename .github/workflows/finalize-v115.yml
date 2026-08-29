@@ -1,0 +1,88 @@
+name: Finalize Graph Explorer v1.1.5 feature
+
+on:
+  push:
+    branches:
+      - feat/large-graph-model-picker
+    paths:
+      - .github/workflows/finalize-v115.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout latest feature branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Apply final source hardening
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          node scripts/harden-v115.mjs
+          if ($LASTEXITCODE -ne 0) { throw "harden-v115 falhou" }
+          node scripts/fix-v115-ollama-profiles.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Ollama profile patch falhou" }
+          node scripts/patch-qa-v115.mjs
+          if ($LASTEXITCODE -ne 0) { throw "QA patch falhou" }
+          foreach ($f in @("main.js","preload.cjs","public/graph-data-worker.cjs","public/graph-json-viewer.js","ge-qa-full.mjs")) {
+            node --check $f
+            if ($LASTEXITCODE -ne 0) { throw "Syntax check falhou: $f" }
+          }
+
+      - name: Run unit and contract tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          node tests/v115-graph-worker.mjs
+          if ($LASTEXITCODE -ne 0) { throw "worker test falhou" }
+          node tests/v115-static-check.mjs
+          if ($LASTEXITCODE -ne 0) { throw "static contract falhou" }
+          $main = Get-Content main.js -Raw
+          $qa = Get-Content ge-qa-full.mjs -Raw
+          if (!$main.Contains('labelStep(false)')) { throw "Otimizar IA ainda usa missing-only" }
+          if (!$main.Contains('app.asar.unpacked')) { throw "worker empacotado ausente" }
+          if (!$main.Contains('sized.length >= 3')) { throw "presets relativos do Ollama ausentes" }
+          if ($qa.Contains('modelInput')) { throw "QA ainda depende do campo de modelo antigo" }
+          if (!$qa.Contains('MODEL_CATALOG_DYNAMIC')) { throw "QA sem gate de catálogo dinâmico" }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows artifacts
+        run: npx electron-builder --win nsis portable --publish never
+
+      - name: Validate package layout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($f in @(
+            "dist/Graph-Explorer-Setup-1.1.5.exe",
+            "dist/Graph-Explorer-Setup-1.1.5.exe.blockmap",
+            "dist/Graph-Explorer-1.1.5.exe",
+            "dist/latest.yml",
+            "dist/win-unpacked/resources/app.asar.unpacked/public/graph-data-worker.cjs"
+          )) { if (!(Test-Path $f)) { throw "Artefato ausente: $f" } }
+
+      - name: Commit final validated source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.js package.json package-lock.json public/graph-data-worker.cjs ge-qa-full.mjs
+          git commit -m "fix: finalize v1.1.5 large graph and model selection"
+          if ($LASTEXITCODE -ne 0) { throw "Commit final falhou" }
+          git push origin HEAD:feat/large-graph-model-picker
+          if ($LASTEXITCODE -ne 0) { throw "Push final falhou" }
