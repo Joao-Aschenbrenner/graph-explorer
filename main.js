@@ -226,6 +226,22 @@ async function fetchProviderModels(config = {}) {
       if (!r.ok) return { ok: false, models: [], message: "Ollama HTTP " + r.status };
       const payload = await r.json();
       const models = (payload.models || []).map((m) => ({ id: m.name || m.model, label: m.name || m.model, profile: modelProfile(m.name || m.model, m), tier: "local", compatible: true, meta: m?.details?.parameter_size || "" })).filter((m) => m.id);
+      const parameterBillions = (value) => {
+        const match = String(value || "").match(/([\d.]+)\s*B/i);
+        return match ? Number(match[1]) : NaN;
+      };
+      const sized = models.filter((m) => Number.isFinite(parameterBillions(m.meta))).sort((a, b) => parameterBillions(a.meta) - parameterBillions(b.meta));
+      if (sized.length >= 3) {
+        sized.forEach((m) => { m.profile = "balanced"; });
+        sized[0].profile = "fast";
+        sized[sized.length - 1].profile = "quality";
+        sized[Math.floor((sized.length - 1) / 2)].profile = "balanced";
+      } else if (sized.length === 2) {
+        sized[0].profile = "fast";
+        sized[1].profile = "quality";
+      } else if (sized.length === 1) {
+        sized[0].profile = "balanced";
+      }
       return { ok: true, models, source: "ollama", refreshedAt: new Date().toISOString() };
     }
     if (provider === "gemini") {
@@ -305,7 +321,10 @@ function loadGraphData(projectPath) {
     if (!isProjectInsideWorkspace(projectPath)) { reject(new Error("Projeto fora do workspace configurado")); return; }
     const graphPath = graphJsonPath(projectPath);
     if (!existsSync(graphPath)) { reject(new Error("graph.json não encontrado")); return; }
-    const worker = new Worker(join(__dirname, "public", "graph-data-worker.cjs"), { workerData: { graphPath, projectPath } });
+    const workerFile = app.isPackaged
+      ? join(process.resourcesPath, "app.asar.unpacked", "public", "graph-data-worker.cjs")
+      : join(__dirname, "public", "graph-data-worker.cjs");
+    const worker = new Worker(workerFile, { workerData: { graphPath, projectPath } });
     const timer = setTimeout(() => { worker.terminate(); reject(new Error("Tempo excedido ao preparar o grafo grande")); }, 120000);
     worker.once("message", (message) => { clearTimeout(timer); worker.terminate(); if (message?.ok) resolvePromise(message); else reject(new Error(message?.error || "Falha ao preparar graph.json")); });
     worker.once("error", (error) => { clearTimeout(timer); reject(error); });
@@ -457,16 +476,18 @@ function killTree(pid) {
 function buildSteps(operation, labelCfg) {
   const steps = [];
   const p = PROVIDERS[labelCfg.provider];
-  const labelStep = () => ({
+  const labelStep = (missingOnly = true) => ({
     name: "Otimizando nomes das comunidades com IA (" + p.label + ")",
-    args: ["label", ".", "--backend", p.backend, "--missing-only"],
+    args: missingOnly
+      ? ["label", ".", "--backend", p.backend, "--missing-only"]
+      : ["label", ".", "--backend", p.backend],
     env: labelCfg.env,
   });
 
   if (operation === "generate") {
     steps.push({ name: "Extraindo estrutura do código (AST)", args: ["extract", ".", "--code-only"] });
     steps.push({ name: "Agrupando comunidades", args: ["cluster-only", "."] });
-    if (labelCfg.canLabel && p && p.backend) steps.push(labelStep());
+    if (labelCfg.canLabel && p && p.backend) steps.push(labelStep(true));
   } else if (operation === "update") {
     if (graphifyCaps && graphifyCaps.update) {
       steps.push({ name: "Atualizando grafo", args: ["update", "."] });
@@ -478,7 +499,7 @@ function buildSteps(operation, labelCfg) {
     steps.push({ name: "Reagrupando comunidades", args: ["cluster-only", "."] });
   } else if (operation === "relabel") {
     if (!p || !p.backend) throw new Error("Provedor sem backend de IA");
-    steps.push(labelStep());
+    steps.push(labelStep(false));
   }
   return steps;
 }
@@ -670,7 +691,7 @@ async function registerIpcHandlers() {
         if (config.model && modelIds.length && !modelIds.includes(config.model))
           return { ok: false, message: "Endpoint acessível, mas o modelo informado não está listado" };
 
-        if (config.provider === "nvidia") {
+        if (["nvidia", "opencode_zen", "opencode_go"].includes(config.provider)) {
           if (!config.model) return { ok: false, message: "Informe o modelo NVIDIA" };
           const inferenceResponse = await fetch(base + "/chat/completions", {
             method: "POST",
@@ -687,7 +708,7 @@ async function registerIpcHandlers() {
             const authMessage = [401, 403].includes(inferenceResponse.status) ? "Chave inválida" : "Falha na inferência";
             return { ok: false, message: `${authMessage} (HTTP ${inferenceResponse.status})` };
           }
-          return { ok: true, message: "Chave e modelo NVIDIA validados (inferência OK)" };
+          return { ok: true, message: "Chave e modelo validados (inferência OK)" };
         }
 
         return { ok: true, message: config.model ? "Endpoint acessível, modelo listado" : "Endpoint acessível" };

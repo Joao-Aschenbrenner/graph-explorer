@@ -52,6 +52,9 @@
         "repo": "graph-explorer",
         "releaseType": "release"
       }
+    ],
+    "asarUnpack": [
+      "public/graph-data-worker.cjs"
     ]
   },
   "dependencies": {

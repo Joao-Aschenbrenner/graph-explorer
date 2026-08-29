@@ -2,7 +2,7 @@ const { parentPort, workerData } = require("worker_threads");
 const fs = require("fs");
 const path = require("path");
 
-const MAX_GRAPH_BYTES = 768 * 1024 * 1024;
+const MAX_GRAPH_BYTES = 256 * 1024 * 1024;
 const FULL_NODE_LIMIT = 2500;
 const FULL_EDGE_LIMIT = 25000;
 const META_NODE_LIMIT = 800;
