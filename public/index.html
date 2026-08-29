@@ -52,6 +52,9 @@ input:focus,select:focus{border-color:#58a6ff}
 .provider-fields.hidden{display:none}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .provider-fields input,.provider-fields select{width:100%}
+.model-picker{display:flex;gap:6px;align-items:center}.model-picker select{flex:1;min-width:0}
+.model-refresh{padding:8px 10px;white-space:nowrap}.model-meta{font-size:10px;color:#8b949e;margin:6px 0 2px;min-height:14px}
+.model-profiles{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}.profile-btn{font-size:10px;padding:4px 7px;border-radius:999px;background:#161b22;border:1px solid #30363d;color:#8b949e;cursor:pointer}.profile-btn:hover{color:#f0f6fc;border-color:#58a6ff}
 .test-result{font-size:11px;margin-top:8px;min-height:14px}
 .test-result.ok{color:#3fb950}.test-result.err{color:#f85149}.test-result.warn{color:#d29922}
 .opt-row{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:#8b949e}
@@ -168,31 +171,17 @@ webview{width:100%;height:100%;border:none;background:#0d1117}
     <div class="row">
       <label>Provedor de IA (opcional — para nomes melhores)</label>
       <select id="providerSelect">
-        <optgroup label="Backends diretos">
-          <option value="none">Sem IA (análise local)</option>
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic / Claude</option>
-          <option value="gemini">Google Gemini</option>
-          <option value="deepseek">DeepSeek</option>
-          <option value="kimi">Kimi</option>
-          <option value="ollama">Ollama (local)</option>
-          <option value="azure">Azure OpenAI</option>
-          <option value="bedrock">AWS Bedrock</option>
-        </optgroup>
-        <optgroup label="OpenAI-compatible">
-          <option value="nvidia">NVIDIA NIM</option>
-          <option value="openrouter">OpenRouter</option>
-          <option value="groq">Groq</option>
-          <option value="lmstudio">LM Studio</option>
-          <option value="vllm">vLLM</option>
-          <option value="custom">Custom</option>
-        </optgroup>
+        <optgroup label="Local / sem custo"><option value="none">Sem IA (análise local)</option><option value="ollama">Ollama (local)</option><option value="lmstudio">LM Studio</option><option value="vllm">vLLM</option></optgroup>
+        <optgroup label="Grátis / free tier"><option value="opencode_zen">OpenCode Zen (free + pago)</option><option value="gemini">Google Gemini</option><option value="nvidia">NVIDIA NIM</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option></optgroup>
+        <optgroup label="Pagos / assinatura"><option value="opencode_go">OpenCode Go</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic / Claude</option><option value="deepseek">DeepSeek</option><option value="kimi">Kimi</option><option value="mistral">Mistral</option><option value="azure">Azure OpenAI</option><option value="bedrock">AWS Bedrock</option></optgroup>
+        <optgroup label="Avançado"><option value="custom">Custom (OpenAI-compatible)</option></optgroup>
       </select>
       <div class="provider-fields hidden" id="providerFields">
         <div class="grid2" style="margin-bottom:8px">
-          <input id="endpointInput" placeholder="endpoint">
-          <input id="modelInput" placeholder="modelo">
+          <input id="endpointInput" placeholder="endpoint (preenchido automaticamente)">
+          <div class="model-picker"><select id="modelSelect"><option value="">Selecione um modelo</option></select><button class="btn sec model-refresh" type="button" id="btnRefreshModels" title="Atualizar modelos">↻</button></div>
         </div>
+        <div class="model-meta" id="modelMeta"></div><div class="model-profiles" id="modelProfiles"></div>
         <input id="keyInput" type="password" placeholder="chave de API (não é exibida nem salva em texto puro)" style="width:100%">
         <div class="opt-row">
           <input type="checkbox" id="sessionOnly">
@@ -262,38 +251,24 @@ webview{width:100%;height:100%;border:none;background:#0d1117}
   </div>
 </div>
 
+<script src="./graph-json-viewer.js"></script>
 <script>
 const PRESETS = {
-  none:{endpoint:"",model:""},
-  openai:{endpoint:"https://api.openai.com/v1",model:"gpt-4o-mini"},
-  anthropic:{endpoint:"https://api.anthropic.com",model:"claude-3-5-haiku-latest"},
-  gemini:{endpoint:"https://generativelanguage.googleapis.com",model:"gemini-1.5-flash"},
-  deepseek:{endpoint:"https://api.deepseek.com",model:"deepseek-chat"},
-  kimi:{endpoint:"https://api.moonshot.cn/v1",model:"moonshot-v1-8k"},
-  ollama:{endpoint:"http://localhost:11434",model:"llama3"},
-  azure:{endpoint:"",model:""},
-  bedrock:{endpoint:"",model:""},
-  nvidia:{endpoint:"https://integrate.api.nvidia.com/v1",model:"meta/llama-3.1-8b-instruct"},
-  openrouter:{endpoint:"https://openrouter.ai/api/v1",model:""},
-  groq:{endpoint:"https://api.groq.com/openai/v1",model:""},
-  lmstudio:{endpoint:"http://localhost:1234/v1",model:"local-model"},
-  vllm:{endpoint:"http://localhost:8000/v1",model:""},
-  custom:{endpoint:"",model:""}
+  none:{endpoint:"",model:""}, ollama:{endpoint:"http://localhost:11434",model:""}, lmstudio:{endpoint:"http://localhost:1234/v1",model:""}, vllm:{endpoint:"http://localhost:8000/v1",model:""},
+  opencode_zen:{endpoint:"https://opencode.ai/zen/v1",model:"big-pickle"}, gemini:{endpoint:"https://generativelanguage.googleapis.com",model:""}, nvidia:{endpoint:"https://integrate.api.nvidia.com/v1",model:""}, openrouter:{endpoint:"https://openrouter.ai/api/v1",model:""}, groq:{endpoint:"https://api.groq.com/openai/v1",model:""},
+  opencode_go:{endpoint:"https://opencode.ai/zen/go/v1",model:"glm-5.3-flash"}, openai:{endpoint:"https://api.openai.com/v1",model:""}, anthropic:{endpoint:"https://api.anthropic.com",model:""}, deepseek:{endpoint:"https://api.deepseek.com",model:"deepseek-chat"}, kimi:{endpoint:"https://api.moonshot.cn/v1",model:""}, mistral:{endpoint:"https://api.mistral.ai/v1",model:""}, azure:{endpoint:"",model:""}, bedrock:{endpoint:"",model:""}, custom:{endpoint:"",model:""}
 };
 const PROVIDER_OPTIONS = [
-  {group:"Backends diretos", items:[
-    ["none","Sem IA (análise local)"],["openai","OpenAI"],["anthropic","Anthropic / Claude"],
-    ["gemini","Google Gemini"],["deepseek","DeepSeek"],["kimi","Kimi"],["ollama","Ollama (local)"],
-    ["azure","Azure OpenAI"],["bedrock","AWS Bedrock"]]},
-  {group:"OpenAI-compatible", items:[
-    ["nvidia","NVIDIA NIM"],["openrouter","OpenRouter"],["groq","Groq"],["lmstudio","LM Studio"],
-    ["vllm","vLLM"],["custom","Custom"]]}
+  {group:"Local / sem custo",items:[["none","Sem IA (análise local)"],["ollama","Ollama (local)"],["lmstudio","LM Studio"],["vllm","vLLM"]]},
+  {group:"Grátis / free tier",items:[["opencode_zen","OpenCode Zen (free + pago)"],["gemini","Google Gemini"],["nvidia","NVIDIA NIM"],["openrouter","OpenRouter"],["groq","Groq"]]},
+  {group:"Pagos / assinatura",items:[["opencode_go","OpenCode Go"],["openai","OpenAI"],["anthropic","Anthropic / Claude"],["deepseek","DeepSeek"],["kimi","Kimi"],["mistral","Mistral"],["azure","Azure OpenAI"],["bedrock","AWS Bedrock"]]},
+  {group:"Avançado",items:[["custom","Custom (OpenAI-compatible)"]]}
 ];
 
 const $ = (id) => document.getElementById(id);
 const api = window.graphExplorer;
 
-const state = { workspace:null, projects:[], selected:null, activeJobId:null, activeOp:null, graphify:null, safeAvailable:true, config:{ encryptionAvailable:true } };
+const state = { workspace:null, projects:[], selected:null, activeJobId:null, activeOp:null, graphify:null, safeAvailable:true, config:{ encryptionAvailable:true }, modelCache:new Map(), modelRequest:0, jsonViewer:null };
 
 // subscribe to graphify events once
 api.onGraphifyEvent(handleEvent);
@@ -325,18 +300,12 @@ function showView(id){
 
 // ── Setup ──
 function buildProviderSelect(){
-  const sel = $("providerSelect");
-  if (!sel.options.length) {
-    PROVIDER_OPTIONS.forEach(g=>{
-      const og = document.createElement("optgroup"); og.label = g.group;
-      g.items.forEach(([v,l])=>{ const o=document.createElement("option"); o.value=v;o.textContent=l;og.appendChild(o); });
-      sel.appendChild(og);
-    });
-  }
-  sel.value = (state.config && state.config.provider) || "none";
-  sel.onchange = onProviderChange;
-  onProviderChange();
+  const sel=$("providerSelect"); sel.innerHTML=""; PROVIDER_OPTIONS.forEach(g=>{const og=document.createElement("optgroup");og.label=g.group;g.items.forEach(([v,l])=>{const o=document.createElement("option");o.value=v;o.textContent=l;og.appendChild(o)});sel.appendChild(og)}); sel.value=(state.config&&state.config.provider)||"none";sel.onchange=onProviderChange;onProviderChange();
 }
+function modelValue(id){return ($(id)&&$(id).value)||"";}
+function renderProfileButtons(container,select,models){container.innerHTML="";[["fast","⚡ Rápido"],["balanced","⚖ Médio"],["quality","🎯 Pesado / preciso"]].forEach(([profile,label])=>{const candidate=models.find(m=>m.compatible!==false&&m.profile===profile);if(!candidate)return;const b=document.createElement("button");b.type="button";b.className="profile-btn";b.textContent=label;b.title=candidate.label;b.onclick=()=>{select.value=candidate.id;select.dispatchEvent(new Event("change"));};container.appendChild(b);});}
+function populateModelSelect(select,models,preferred){select.innerHTML="";const compatible=models.filter(m=>m.compatible!==false),incompatible=models.filter(m=>m.compatible===false);const add=(label,items,disabled=false)=>{if(!items.length)return;const g=document.createElement("optgroup");g.label=label;items.forEach(m=>{const o=document.createElement("option");o.value=m.id;o.textContent=m.label||m.id;o.disabled=disabled;g.appendChild(o)});select.appendChild(g)};add("Modelos disponíveis",compatible);add("Disponíveis no provedor · incompatíveis com Graphify",incompatible,true);if(preferred&&!compatible.some(m=>m.id===preferred)){const o=document.createElement("option");o.value=preferred;o.textContent=preferred+" · salvo/não listado";select.insertBefore(o,select.firstChild)}if(!select.options.length){const o=document.createElement("option");o.value="";o.textContent="Nenhum modelo listado";select.appendChild(o)}const target=preferred&&[...select.options].some(o=>o.value===preferred&&!o.disabled)?preferred:(compatible[0]?.id||preferred||"");select.value=target;}
+async function refreshModels({provider,endpoint,apiKey,select,meta,profiles,preferred,force=false}){if(!provider||provider==="none"){select.innerHTML='<option value="">Sem IA</option>';meta.textContent="";profiles.innerHTML="";return;}const cacheKey=provider+"|"+endpoint,cached=state.modelCache.get(cacheKey);if(!force&&cached&&Date.now()-cached.at<300000){populateModelSelect(select,cached.models,preferred);renderProfileButtons(profiles,select,cached.models);meta.textContent="catálogo em cache · "+cached.models.length+" modelos";return;}const request=++state.modelRequest;select.innerHTML='<option value="">Carregando modelos...</option>';select.disabled=true;meta.textContent="atualizando catálogo...";try{const res=await api.listModels({provider,endpoint,apiKey});if(request!==state.modelRequest)return;const models=Array.isArray(res&&res.models)?res.models:[];if(!res||!res.ok){populateModelSelect(select,[],preferred);meta.textContent=(res&&res.message)||"Não foi possível carregar modelos";renderProfileButtons(profiles,select,[]);return;}state.modelCache.set(cacheKey,{at:Date.now(),models});populateModelSelect(select,models,preferred);renderProfileButtons(profiles,select,models);const free=models.filter(m=>m.tier==="free").length;meta.textContent=(res.manual?"catálogo automático indisponível · ":"atualizado agora · ")+models.length+" modelos"+(free?(" · "+free+" grátis"):"");}catch(e){populateModelSelect(select,[],preferred);meta.textContent="Falha ao atualizar modelos: "+e.message;renderProfileButtons(profiles,select,[]);}finally{select.disabled=false;}}
 
 function renderUpdateStatus(status){
   const badge = $("versionBadge");
@@ -358,16 +327,7 @@ $("versionBadge").onclick = async ()=>{
   const status = await api.checkForUpdates().catch((error)=>({ state:"error", currentVersion:"?", message:error.message }));
   renderUpdateStatus(status);
 };
-function onProviderChange(){
-  const p = $("providerSelect").value;
-  const fields = $("providerFields");
-  if (p === "none"){ fields.classList.add("hidden"); return; }
-  fields.classList.remove("hidden");
-  const cfg = state.config || {};
-  const sameProvider = cfg.provider === p;
-  $("endpointInput").value = sameProvider ? (cfg.endpoint || PRESETS[p].endpoint || "") : (PRESETS[p].endpoint || "");
-  $("modelInput").value = sameProvider ? (cfg.model || PRESETS[p].model || "") : (PRESETS[p].model || "");
-}
+async function onProviderChange(){const p=$("providerSelect").value,fields=$("providerFields");if(p==="none"){fields.classList.add("hidden");return;}fields.classList.remove("hidden");const cfg=state.config||{},sameProvider=cfg.provider===p,endpoint=sameProvider?(cfg.endpoint||PRESETS[p]?.endpoint||""):(PRESETS[p]?.endpoint||""),preferred=sameProvider?(cfg.model||PRESETS[p]?.model||""):(PRESETS[p]?.model||"");$("endpointInput").value=endpoint;await refreshModels({provider:p,endpoint,apiKey:$("keyInput").value,select:$("modelSelect"),meta:$("modelMeta"),profiles:$("modelProfiles"),preferred});}
 function applySecurityState(cb, warn, status){
   cb.checked = !status.encryptionAvailable || Boolean(status.sessionOnly);
   cb.disabled = !status.encryptionAvailable;
@@ -409,6 +369,8 @@ function showSetup(){
     if (p){ state.workspace = p; $("folderPath").textContent = p; refreshSaveBtn(); }
   };
   $("btnTest").onclick = testConnection;
+  $("btnRefreshModels").onclick = ()=>refreshModels({provider:$("providerSelect").value,endpoint:$("endpointInput").value.trim(),apiKey:$("keyInput").value,select:$("modelSelect"),meta:$("modelMeta"),profiles:$("modelProfiles"),preferred:modelValue("modelSelect"),force:true});
+  $("keyInput").addEventListener("change", ()=>$("btnRefreshModels").click());
   $("btnContinueNoIA").onclick = async ()=>{
     if (!state.workspace){ alert("Selecione uma pasta de projetos primeiro."); return; }
     const res = await api.disableAI({ workspace: state.workspace });
@@ -419,7 +381,7 @@ function showSetup(){
     if (!state.workspace){ alert("Selecione uma pasta de projetos primeiro."); return; }
     const p = $("providerSelect").value;
     const endpoint = p==="none" ? "" : $("endpointInput").value.trim();
-    const model = p==="none" ? "" : $("modelInput").value.trim();
+    const model = p==="none" ? "" : modelValue("modelSelect");
     const sessionOnly = state.config.encryptionAvailable === false || $("sessionOnly").checked;
     const button = $("btnSaveOpen");
     button.disabled = true;
@@ -453,7 +415,7 @@ async function testConnection(){
   r.className = "test-result"; r.textContent = "testando chave e modelo...";
   button.disabled = true;
   try {
-    const res = await api.testProvider({ provider:p, endpoint:$("endpointInput").value.trim(), model:$("modelInput").value.trim(), apiKey:$("keyInput").value });
+    const res = await api.testProvider({ provider:p, endpoint:$("endpointInput").value.trim(), model:modelValue("modelSelect"), apiKey:$("keyInput").value });
     if (res.ok){ r.className="test-result ok"; r.textContent = "✓ " + res.message; }
     else { r.className="test-result err"; r.textContent = "✗ " + res.message; }
   } catch (e) {
@@ -566,11 +528,7 @@ function refreshCenter(){
     return;
   }
 
-  if ((p.status==="graph-with-ia" || p.status==="graph-no-ia") && !p.graphUrl){
-    c.innerHTML = '<div class="center-msg"><div class="big">Grafo encontrado, mas a visualização HTML não existe</div><div class="small">Os dados graph.json foram detectados. Gere/atualize a visualização com o Graphify.</div><button class="btn" style="margin-top:14px" id="updateGraphBtn">Atualizar grafo</button></div>';
-    $("updateGraphBtn").onclick = ()=>runOp(p,"update");
-    return;
-  }
+  if ((p.status==="graph-with-ia" || p.status==="graph-no-ia") && !p.graphUrl && p.hasGraphJson){openJsonGraph(p);return;}
 
   if (p.status==="no-graph"){
     c.innerHTML = '<div class="center-msg"><div class="big">Esta pasta ainda não possui grafo</div><div class="small">O Graphify analisa o código e gera a visualização. Se a IA estiver configurada, os nomes também serão otimizados.</div><button class="btn" style="margin-top:14px" id="genBtn">Gerar grafo</button></div>';
@@ -592,9 +550,10 @@ function openGraph(p){
   wv.setAttribute("partition","graph");
   wv.setAttribute("allowpopups","false");
   wv.addEventListener("did-finish-load", ()=> ov.remove());
-  wv.addEventListener("did-fail-load", (e)=>{ ov.innerHTML='<div class="overlay-msg" style="color:#f85149">Falha ao carregar: '+ (e.errorDescription||"erro") +'</div>'; });
+  wv.addEventListener("did-fail-load", (e)=>{ if(p.hasGraphJson){openJsonGraph(p);return;} ov.innerHTML='<div class="overlay-msg" style="color:#f85149">Falha ao carregar: '+ (e.errorDescription||"erro") +'</div>'; });
   c.appendChild(wv);
 }
+async function openJsonGraph(p){const c=$("center");c.innerHTML='<div class="loading-ov"><div class="spinner"></div><div class="overlay-msg">Preparando visualização do graph.json...</div></div>';try{const data=await api.loadGraphData(p.path);if(!data||!data.ok)throw new Error((data&&data.error)||"Falha ao ler graph.json");if(!window.GraphJsonViewer)throw new Error("Visualizador interno não carregado");if(state.jsonViewer&&state.jsonViewer.destroy)state.jsonViewer.destroy();state.jsonViewer=window.GraphJsonViewer.mount(c,data);}catch(e){c.innerHTML='<div class="center-msg"><div class="big">Não foi possível visualizar o graph.json</div><div class="small"></div><button class="btn" style="margin-top:14px" id="updateGraphBtn">Atualizar grafo</button></div>';c.querySelector(".small").textContent=e.message;$("updateGraphBtn").onclick=()=>runOp(p,"update");}}
 
 // ── Run graphify ──
 function runOp(project, operation){
@@ -659,47 +618,7 @@ $("btnCancel").onclick = ()=>{
 
 // ── Config IA modal ──
 function openConfigModal(){
-  const cfg = state.config || {};
-  const body = `
-    <h3>Configurar provedor de IA</h3>
-    <p>Usado para melhorar os nomes das comunidades (ação "Nomes"). A análise local não precisa de chave.</p>
-    <select id="mProvider"></select>
-    <div id="mFields" style="margin-top:10px">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-        <input id="mEndpoint" placeholder="endpoint">
-        <input id="mModel" placeholder="modelo">
-      </div>
-      <input id="mKey" type="password" placeholder="chave de API" style="width:100%">
-      <div class="opt-row" style="margin-top:8px"><input type="checkbox" id="mSession"><label for="mSession" style="margin:0">usar esta chave apenas durante a sessão</label></div>
-      <div style="margin-top:8px;font-size:11px;color:#8b949e">A chave não é exibida nem salva em texto puro.</div>
-    </div>
-    <div class="warn-note hidden" id="mWarn"></div>
-    <div class="actions" style="justify-content:flex-start;margin-top:14px">
-      <button class="btn sec" id="mTest">Testar</button>
-      <span id="mTestR" style="font-size:11px;align-self:center"></span>
-      <button class="btn" id="mSave" style="margin-left:auto">Salvar</button>
-    </div>`;
-  $("modalBody").innerHTML = body;
-  $("modal").classList.add("visible");
-  const sel = $("mProvider");
-  PROVIDER_OPTIONS.forEach(g=>{ const og=document.createElement("optgroup"); og.label=g.group; g.items.forEach(([v,l])=>{const o=document.createElement("option");o.value=v;o.textContent=l;og.appendChild(o);}); sel.appendChild(og); });
-  sel.value = cfg.provider || "none";
-  const sync = ()=>{ const p=sel.value; const sameProvider=cfg.provider===p; $("mFields").style.display = p==="none"?"none":"block"; $("mEndpoint").value = sameProvider ? (cfg.endpoint || PRESETS[p].endpoint || "") : (PRESETS[p].endpoint || ""); $("mModel").value = sameProvider ? (cfg.model || PRESETS[p].model || "") : (PRESETS[p].model || ""); };
-  sel.onchange = sync; sync();
-  applySecurityState($("mSession"), $("mWarn"), state.config || { encryptionAvailable: true, sessionOnly: false });
-  $("mTest").onclick = async ()=>{
-    const r = await api.testProvider({ provider:sel.value, endpoint:$("mEndpoint").value.trim(), model:$("mModel").value.trim(), apiKey:$("mKey").value });
-    $("mTestR").textContent = r.ok ? "✓ "+(r.message||"") : "✗ "+(r.message||"");
-    $("mTestR").style.color = r.ok ? "#3fb950" : "#f85149";
-  };
-  $("mSave").onclick = async ()=>{
-    const p = sel.value;
-    const sessionOnly = !state.config.encryptionAvailable || $("mSession").checked;
-    const res = await api.saveConfig({ workspace:state.workspace, provider:p, endpoint:p==="none"?"":$("mEndpoint").value.trim(), model:p==="none"?"":$("mModel").value.trim(), apiKey:p==="none"?"":$("mKey").value, sessionOnly });
-    if (!res || !res.ok){ alert("Não foi possível salvar: " + ((res && res.error) || "erro")); return; }
-    state.config = res;
-    $("modal").classList.remove("visible");
-  };
+  const cfg=state.config||{};const body=`<h3>Configurar provedor de IA</h3><p>Escolha o provedor e depois o modelo pela lista atualizada automaticamente. Para Ollama, o app lê os modelos já instalados na sua máquina.</p><select id="mProvider" style="width:100%"></select><div id="mFields" style="margin-top:10px"><input id="mEndpoint" placeholder="endpoint (preenchido automaticamente)" style="width:100%;margin-bottom:8px"><div class="model-picker"><select id="mModel"><option value="">Selecione um modelo</option></select><button class="btn sec model-refresh" type="button" id="mRefresh" title="Atualizar modelos">↻</button></div><div class="model-meta" id="mMeta"></div><div class="model-profiles" id="mProfiles"></div><input id="mKey" type="password" placeholder="chave de API" style="width:100%;margin-top:8px"><div class="opt-row" style="margin-top:8px"><input type="checkbox" id="mSession"><label for="mSession" style="margin:0">usar esta chave apenas durante a sessão</label></div><div style="margin-top:8px;font-size:11px;color:#8b949e">A chave não é exibida nem salva em texto puro.</div></div><div class="warn-note hidden" id="mWarn"></div><div class="actions" style="justify-content:flex-start;margin-top:14px"><button class="btn sec" id="mTest">Testar</button><span id="mTestR" style="font-size:11px;align-self:center"></span><button class="btn" id="mSave" style="margin-left:auto">Salvar</button></div>`;$("modalBody").innerHTML=body;$("modal").classList.add("visible");const sel=$("mProvider");PROVIDER_OPTIONS.forEach(g=>{const og=document.createElement("optgroup");og.label=g.group;g.items.forEach(([v,l])=>{const o=document.createElement("option");o.value=v;o.textContent=l;og.appendChild(o)});sel.appendChild(og)});sel.value=cfg.provider||"none";const sync=async(force=false)=>{const p=sel.value,sameProvider=cfg.provider===p;$("mFields").style.display=p==="none"?"none":"block";if(p==="none")return;const endpoint=sameProvider?(cfg.endpoint||PRESETS[p]?.endpoint||""):(PRESETS[p]?.endpoint||""),preferred=sameProvider?(cfg.model||PRESETS[p]?.model||""):(PRESETS[p]?.model||"");$("mEndpoint").value=endpoint;await refreshModels({provider:p,endpoint,apiKey:$("mKey").value,select:$("mModel"),meta:$("mMeta"),profiles:$("mProfiles"),preferred,force});};sel.onchange=()=>sync(false);sync(false);$("mRefresh").onclick=()=>sync(true);$("mKey").addEventListener("change",()=>$("mRefresh").click());applySecurityState($("mSession"),$("mWarn"),state.config||{encryptionAvailable:true,sessionOnly:false});$("mTest").onclick=async()=>{const r=await api.testProvider({provider:sel.value,endpoint:$("mEndpoint").value.trim(),model:$("mModel").value,apiKey:$("mKey").value});$("mTestR").textContent=r.ok?"✓ "+(r.message||""):"✗ "+(r.message||"");$("mTestR").style.color=r.ok?"#3fb950":"#f85149";};$("mSave").onclick=async()=>{const p=sel.value,sessionOnly=!state.config.encryptionAvailable||$("mSession").checked;const res=await api.saveConfig({workspace:state.workspace,provider:p,endpoint:p==="none"?"":$("mEndpoint").value.trim(),model:p==="none"?"":$("mModel").value,apiKey:p==="none"?"":$("mKey").value,sessionOnly});if(!res||!res.ok){alert("Não foi possível salvar: "+((res&&res.error)||"erro"));return;}state.config=res;$("modal").classList.remove("visible");};
 }
 
 // ── Prompt modal ──
@@ -723,7 +642,7 @@ function openPromptModal(){
 9. Não exiba, grave ou copie nenhuma chave de API nos logs.
 10. Ao terminar, apresente uma tabela: projeto, caminho, grafo criado/atualizado, nós, conexões, comunidades, provedor, erros.
 11. Não faça commits e não envie nada ao GitHub/GitLab.`;
-  const explain = `Como funciona: o Graphify lê seu código (extract → árvore sintática), agrupa os elementos em comunidades (cluster-only) e, se hove uma IA configurada, dá nomes humanos a essas comunidades (label). O Graph Explorer abre o arquivo <code>graphify-out/graph.html</code> gerado.
+  const explain = `Como funciona: o Graphify lê seu código (extract → árvore sintática), agrupa os elementos em comunidades (cluster-only) e, se hove uma IA configurada, dá nomes humanos a essas comunidades (label). O Graph Explorer abre <code>graphify-out/graph.html</code> quando disponível; em projetos grandes, quando o Graphify não gera HTML, o app visualiza diretamente o <code>graph.json</code> em modo otimizado por comunidades.
 
 Você NÃO precisa rodar o Graphify antes de abrir o app: basta selecionar a pasta no próprio Graph Explorer e usar "Gerar grafo". Este prompt serve para quem prefere delegar a tarefa a um agente.`;
   $("modalBody").innerHTML = `<h3>Prompt base para agente (OpenCode, etc.)</h3><p>${explain}</p><pre id="promptText">${prompt}</pre><div class="actions"><button class="btn" id="mCopy">Copiar prompt</button></div>`;

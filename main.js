@@ -8,10 +8,11 @@ import {
 } from "electron";
 import electronUpdater from "electron-updater";
 import { promises as fsp, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { join, dirname } from "path";
+import { join, dirname, resolve, relative, isAbsolute } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { spawn } from "child_process";
 import crypto from "crypto";
+import { Worker } from "worker_threads";
 
 const { autoUpdater } = electronUpdater;
 
@@ -149,22 +150,133 @@ async function resolveProviderKey(config) {
 
 // ── Providers ─────────────────────────────────────────────────
 const PROVIDERS = {
-  none: { label: "Sem IA (análise local)", group: "direct", backend: null },
-  openai: { label: "OpenAI", group: "direct", backend: "openai", endpoint: "https://api.openai.com/v1", model: "gpt-4o-mini" },
-  anthropic: { label: "Anthropic / Claude", group: "direct", backend: "claude", endpoint: "https://api.anthropic.com", model: "claude-3-5-haiku-latest" },
-  gemini: { label: "Google Gemini", group: "direct", backend: "gemini", endpoint: "https://generativelanguage.googleapis.com", model: "gemini-1.5-flash" },
-  deepseek: { label: "DeepSeek", group: "direct", backend: "deepseek", endpoint: "https://api.deepseek.com", model: "deepseek-chat" },
-  kimi: { label: "Kimi", group: "direct", backend: "kimi", endpoint: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
-  ollama: { label: "Ollama (local)", group: "direct", backend: "ollama", endpoint: "http://localhost:11434", model: "llama3" },
-  azure: { label: "Azure OpenAI", group: "direct", backend: "azure", endpoint: "", model: "" },
-  bedrock: { label: "AWS Bedrock", group: "direct", backend: "bedrock", endpoint: "", model: "" },
-  nvidia: { label: "NVIDIA NIM", group: "compatible", backend: "openai", endpoint: "https://integrate.api.nvidia.com/v1", model: "meta/llama-3.1-8b-instruct" },
-  openrouter: { label: "OpenRouter", group: "compatible", backend: "openai", endpoint: "https://openrouter.ai/api/v1", model: "" },
-  groq: { label: "Groq", group: "compatible", backend: "openai", endpoint: "https://api.groq.com/openai/v1", model: "" },
-  lmstudio: { label: "LM Studio", group: "compatible", backend: "openai", endpoint: "http://localhost:1234/v1", model: "local-model" },
-  vllm: { label: "vLLM", group: "compatible", backend: "openai", endpoint: "http://localhost:8000/v1", model: "" },
-  custom: { label: "Custom (OpenAI-compatible)", group: "compatible", backend: "openai", endpoint: "", model: "" },
+  none: { label: "Sem IA (análise local)", category: "local", backend: null, endpoint: "", model: "", keyOptional: true },
+  ollama: { label: "Ollama (local)", category: "local", backend: "ollama", endpoint: "http://localhost:11434", model: "", keyOptional: true, modelSource: "ollama" },
+  lmstudio: { label: "LM Studio", category: "local", backend: "openai", endpoint: "http://localhost:1234/v1", model: "", keyOptional: true, modelSource: "openai" },
+  vllm: { label: "vLLM", category: "local", backend: "openai", endpoint: "http://localhost:8000/v1", model: "", keyOptional: true, modelSource: "openai" },
+  opencode_zen: { label: "OpenCode Zen (free + pago)", category: "free", backend: "openai", endpoint: "https://opencode.ai/zen/v1", model: "big-pickle", modelSource: "openai", modelsPublic: true },
+  gemini: { label: "Google Gemini", category: "free", backend: "gemini", endpoint: "https://generativelanguage.googleapis.com", model: "", modelSource: "gemini" },
+  nvidia: { label: "NVIDIA NIM", category: "free", backend: "openai", endpoint: "https://integrate.api.nvidia.com/v1", model: "", modelSource: "openai" },
+  openrouter: { label: "OpenRouter", category: "free", backend: "openai", endpoint: "https://openrouter.ai/api/v1", model: "", modelSource: "openai" },
+  groq: { label: "Groq", category: "free", backend: "openai", endpoint: "https://api.groq.com/openai/v1", model: "", modelSource: "openai" },
+  opencode_go: { label: "OpenCode Go", category: "paid", backend: "openai", endpoint: "https://opencode.ai/zen/go/v1", model: "glm-5.3-flash", modelSource: "openai", modelsPublic: true },
+  openai: { label: "OpenAI", category: "paid", backend: "openai", endpoint: "https://api.openai.com/v1", model: "", modelSource: "openai" },
+  anthropic: { label: "Anthropic / Claude", category: "paid", backend: "claude", endpoint: "https://api.anthropic.com", model: "", modelSource: "anthropic" },
+  deepseek: { label: "DeepSeek", category: "paid", backend: "deepseek", endpoint: "https://api.deepseek.com", model: "deepseek-chat", modelSource: "openai" },
+  kimi: { label: "Kimi", category: "paid", backend: "kimi", endpoint: "https://api.moonshot.cn/v1", model: "", modelSource: "openai" },
+  mistral: { label: "Mistral", category: "paid", backend: "openai", endpoint: "https://api.mistral.ai/v1", model: "", modelSource: "openai" },
+  azure: { label: "Azure OpenAI", category: "paid", backend: "azure", endpoint: "", model: "", modelSource: "manual" },
+  bedrock: { label: "AWS Bedrock", category: "paid", backend: "bedrock", endpoint: "", model: "", modelSource: "manual" },
+  custom: { label: "Custom (OpenAI-compatible)", category: "advanced", backend: "openai", endpoint: "", model: "", keyOptional: true, modelSource: "openai" },
 };
+
+function prettyModelName(id) {
+  return String(id || "").replace(/^models\//, "").replace(/[:/_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bGpt\b/g, "GPT").replace(/\bGlm\b/g, "GLM").replace(/\bAi\b/g, "AI").replace(/\bMimo\b/g, "MiMo").trim();
+}
+function profileFromParameterSize(value) {
+  const match = String(value || "").match(/([\d.]+)\s*B/i);
+  if (!match) return null;
+  const size = Number(match[1]);
+  if (!Number.isFinite(size)) return null;
+  if (size <= 12) return "fast";
+  if (size <= 40) return "balanced";
+  return "quality";
+}
+function modelProfile(id, metadata = {}) {
+  const fromSize = profileFromParameterSize(metadata?.details?.parameter_size || metadata?.parameter_size);
+  if (fromSize) return fromSize;
+  const name = String(id || "").toLowerCase();
+  if (/flash|lightning|nano|mini|small|haiku|spark|8b|7b|3b|1b/.test(name)) return "fast";
+  if (/pro|max|opus|ultra|large|70b|120b|122b|397b|405b|550b|675b|gpt-5\.6-sol/.test(name)) return "quality";
+  return "balanced";
+}
+function openCodeGraphifyCompatible(provider, id) {
+  const name = String(id || "").toLowerCase();
+  if (provider === "opencode_zen") {
+    if (/^(claude-|gemini-|gpt-|qwen)/.test(name)) return false;
+    if (/^muse-/.test(name)) return false;
+    return /^(big-pickle|deepseek-|glm-|kimi-|minimax-|mimo-|hy3|nemotron-|ling-|laguna-)/.test(name) || /-free$/.test(name);
+  }
+  if (provider === "opencode_go") {
+    if (/^(gpt-|grok-|minimax-|muse-|qwen)/.test(name)) return false;
+    return /^(glm-|kimi-|longcat-|deepseek-|mimo-|hy3)/.test(name);
+  }
+  return true;
+}
+function modelTier(provider, id) {
+  const name = String(id || "").toLowerCase();
+  if (provider === "opencode_zen" && (name === "big-pickle" || /-free$/.test(name))) return "free";
+  if (provider === "openrouter" && /:free$/.test(name)) return "free";
+  if (PROVIDERS[provider]?.category === "free") return "free-tier";
+  if (PROVIDERS[provider]?.category === "local") return "local";
+  return "paid";
+}
+async function fetchProviderModels(config = {}) {
+  const provider = config.provider;
+  const p = PROVIDERS[provider];
+  if (!p) return { ok: false, models: [], message: "Provedor desconhecido" };
+  if (provider === "none") return { ok: true, models: [], source: "none" };
+  const persisted = loadConfigFile();
+  const suppliedKey = typeof config.apiKey === "string" ? config.apiKey.trim() : "";
+  const key = suppliedKey || (persisted.provider === provider ? await resolveProviderKey(persisted) : null);
+  const endpoint = String(config.endpoint || p.endpoint || "").replace(/\/$/, "");
+  try {
+    if (provider === "ollama") {
+      const r = await fetch((endpoint || "http://localhost:11434") + "/api/tags", { signal: AbortSignal.timeout(15000) });
+      if (!r.ok) return { ok: false, models: [], message: "Ollama HTTP " + r.status };
+      const payload = await r.json();
+      const models = (payload.models || []).map((m) => ({ id: m.name || m.model, label: m.name || m.model, profile: modelProfile(m.name || m.model, m), tier: "local", compatible: true, meta: m?.details?.parameter_size || "" })).filter((m) => m.id);
+      const parameterBillions = (value) => {
+        const match = String(value || "").match(/([\d.]+)\s*B/i);
+        return match ? Number(match[1]) : NaN;
+      };
+      const sized = models.filter((m) => Number.isFinite(parameterBillions(m.meta))).sort((a, b) => parameterBillions(a.meta) - parameterBillions(b.meta));
+      if (sized.length >= 3) {
+        sized.forEach((m) => { m.profile = "balanced"; });
+        sized[0].profile = "fast";
+        sized[sized.length - 1].profile = "quality";
+        sized[Math.floor((sized.length - 1) / 2)].profile = "balanced";
+      } else if (sized.length === 2) {
+        sized[0].profile = "fast";
+        sized[1].profile = "quality";
+      } else if (sized.length === 1) {
+        sized[0].profile = "balanced";
+      }
+      return { ok: true, models, source: "ollama", refreshedAt: new Date().toISOString() };
+    }
+    if (provider === "gemini") {
+      if (!key) return { ok: false, models: [], message: "Informe a chave Gemini para carregar os modelos" };
+      const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?key=" + encodeURIComponent(key), { signal: AbortSignal.timeout(20000) });
+      if (!r.ok) return { ok: false, models: [], message: "Gemini HTTP " + r.status };
+      const payload = await r.json();
+      const models = (payload.models || []).filter((m) => !Array.isArray(m.supportedGenerationMethods) || m.supportedGenerationMethods.includes("generateContent")).map((m) => { const id = String(m.name || "").replace(/^models\//, ""); return { id, label: m.displayName || prettyModelName(id), profile: modelProfile(id, m), tier: "free-tier", compatible: true }; }).filter((m) => m.id);
+      return { ok: true, models, source: "gemini", refreshedAt: new Date().toISOString() };
+    }
+    if (provider === "anthropic") {
+      if (!key) return { ok: false, models: [], message: "Informe a chave Anthropic para carregar os modelos" };
+      const base = endpoint || "https://api.anthropic.com";
+      const r = await fetch(base + "/v1/models", { headers: { "x-api-key": key, "anthropic-version": "2023-06-01" }, signal: AbortSignal.timeout(20000) });
+      if (!r.ok) return { ok: false, models: [], message: "Anthropic HTTP " + r.status };
+      const payload = await r.json();
+      const models = (payload.data || []).map((m) => ({ id: m.id, label: m.display_name || prettyModelName(m.id), profile: modelProfile(m.id, m), tier: "paid", compatible: true })).filter((m) => m.id);
+      return { ok: true, models, source: "anthropic", refreshedAt: new Date().toISOString() };
+    }
+    if (p.modelSource === "manual") {
+      const existing = config.model || (persisted.provider === provider ? persisted.model : "");
+      return { ok: true, models: existing ? [{ id: existing, label: prettyModelName(existing), profile: "balanced", tier: "paid", compatible: true }] : [], source: "saved", manual: true, message: existing ? "Modelo salvo carregado" : "Este provedor precisa de um deployment/modelo configurado externamente" };
+    }
+    if (!endpoint) return { ok: false, models: [], message: "Informe o endpoint" };
+    if (!p.keyOptional && !p.modelsPublic && !key) return { ok: false, models: [], message: "Informe a chave de API para carregar os modelos" };
+    const headers = key ? { Authorization: "Bearer " + key } : {};
+    const r = await fetch(endpoint + "/models", { headers, signal: AbortSignal.timeout(20000) });
+    if (!r.ok) { const auth = [401, 403].includes(r.status) ? " — chave necessária ou inválida" : ""; return { ok: false, models: [], message: "Catálogo HTTP " + r.status + auth }; }
+    const payload = await r.json();
+    const data = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload?.models) ? payload.models : []);
+    const models = data.map((m) => { const id = String(m?.id ?? m?.name ?? m?.model ?? ""); return { id, label: m?.display_name || m?.displayName || m?.label || prettyModelName(id), profile: modelProfile(id, m), tier: modelTier(provider, id), compatible: openCodeGraphifyCompatible(provider, id) }; }).filter((m) => m.id);
+    models.sort((a, b) => { const freeA = a.tier === "free" ? 0 : 1, freeB = b.tier === "free" ? 0 : 1; return freeA - freeB || a.label.localeCompare(b.label, "pt-BR", { sensitivity: "base" }); });
+    return { ok: true, models, source: "live", refreshedAt: new Date().toISOString() };
+  } catch (e) { return { ok: false, models: [], message: "Não foi possível carregar modelos: " + e.message }; }
+}
 
 function labelEnv(provider, config, providerKey) {
   const env = { ...process.env };
@@ -193,6 +305,30 @@ function labelEnv(provider, config, providerKey) {
     if (config.model) env.AZURE_OPENAI_DEPLOYMENT = config.model;
   }
   return env;
+}
+
+// ── graph.json fallback viewer ─────────────────────────────────
+function isProjectInsideWorkspace(projectPath) {
+  const cfg = loadConfigFile();
+  if (!cfg.workspace || !projectPath) return false;
+  const workspace = resolve(cfg.workspace);
+  const project = resolve(projectPath);
+  const rel = relative(workspace, project);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+function loadGraphData(projectPath) {
+  return new Promise((resolvePromise, reject) => {
+    if (!isProjectInsideWorkspace(projectPath)) { reject(new Error("Projeto fora do workspace configurado")); return; }
+    const graphPath = graphJsonPath(projectPath);
+    if (!existsSync(graphPath)) { reject(new Error("graph.json não encontrado")); return; }
+    const workerFile = app.isPackaged
+      ? join(process.resourcesPath, "app.asar.unpacked", "public", "graph-data-worker.cjs")
+      : join(__dirname, "public", "graph-data-worker.cjs");
+    const worker = new Worker(workerFile, { workerData: { graphPath, projectPath } });
+    const timer = setTimeout(() => { worker.terminate(); reject(new Error("Tempo excedido ao preparar o grafo grande")); }, 120000);
+    worker.once("message", (message) => { clearTimeout(timer); worker.terminate(); if (message?.ok) resolvePromise(message); else reject(new Error(message?.error || "Falha ao preparar graph.json")); });
+    worker.once("error", (error) => { clearTimeout(timer); reject(error); });
+  });
 }
 
 // ── Graphify detection / capabilities ─────────────────────────
@@ -340,16 +476,18 @@ function killTree(pid) {
 function buildSteps(operation, labelCfg) {
   const steps = [];
   const p = PROVIDERS[labelCfg.provider];
-  const labelStep = () => ({
+  const labelStep = (missingOnly = true) => ({
     name: "Otimizando nomes das comunidades com IA (" + p.label + ")",
-    args: ["label", ".", "--backend", p.backend, "--missing-only"],
+    args: missingOnly
+      ? ["label", ".", "--backend", p.backend, "--missing-only"]
+      : ["label", ".", "--backend", p.backend],
     env: labelCfg.env,
   });
 
   if (operation === "generate") {
     steps.push({ name: "Extraindo estrutura do código (AST)", args: ["extract", ".", "--code-only"] });
     steps.push({ name: "Agrupando comunidades", args: ["cluster-only", "."] });
-    if (labelCfg.canLabel && p && p.backend) steps.push(labelStep());
+    if (labelCfg.canLabel && p && p.backend) steps.push(labelStep(true));
   } else if (operation === "update") {
     if (graphifyCaps && graphifyCaps.update) {
       steps.push({ name: "Atualizando grafo", args: ["update", "."] });
@@ -361,7 +499,7 @@ function buildSteps(operation, labelCfg) {
     steps.push({ name: "Reagrupando comunidades", args: ["cluster-only", "."] });
   } else if (operation === "relabel") {
     if (!p || !p.backend) throw new Error("Provedor sem backend de IA");
-    steps.push(labelStep());
+    steps.push(labelStep(false));
   }
   return steps;
 }
@@ -410,6 +548,11 @@ async function registerIpcHandlers() {
   ipcMain.handle("workspace:scan", async (_e, root) => {
     if (!root || !existsSync(root)) return { root: null, projects: [] };
     return scanWorkspace(root);
+  });
+
+  ipcMain.handle("graph:data", async (_e, projectPath) => {
+    try { return await loadGraphData(projectPath); }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle("config:load", async () => {
@@ -520,6 +663,8 @@ async function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle("provider:models", async (_e, config) => fetchProviderModels(config || {}));
+
   ipcMain.handle("provider:test", async (_e, config) => {
     config = config || {};
     const p = PROVIDERS[config.provider];
@@ -528,9 +673,9 @@ async function registerIpcHandlers() {
     const persisted = loadConfigFile();
     const suppliedKey = typeof config.apiKey === "string" ? config.apiKey.trim() : "";
     const key = suppliedKey || (persisted.provider === config.provider ? await resolveProviderKey(persisted) : null);
-    if (["openai", "deepseek", "kimi", "nvidia", "openrouter", "groq", "lmstudio", "vllm", "custom"].includes(config.provider)) {
+    if (["openai", "deepseek", "kimi", "mistral", "nvidia", "openrouter", "groq", "lmstudio", "vllm", "opencode_zen", "opencode_go", "custom"].includes(config.provider)) {
       if (!config.endpoint) return { ok: false, message: "Informe o endpoint" };
-      if (["openai", "deepseek", "kimi", "nvidia", "openrouter", "groq"].includes(config.provider) && !key)
+      if (["openai", "deepseek", "kimi", "mistral", "nvidia", "openrouter", "groq", "opencode_zen", "opencode_go"].includes(config.provider) && !key)
         return { ok: false, message: "Informe uma chave de API" };
       try {
         const base = config.endpoint.replace(/\/$/, "");
@@ -546,7 +691,7 @@ async function registerIpcHandlers() {
         if (config.model && modelIds.length && !modelIds.includes(config.model))
           return { ok: false, message: "Endpoint acessível, mas o modelo informado não está listado" };
 
-        if (config.provider === "nvidia") {
+        if (["nvidia", "opencode_zen", "opencode_go"].includes(config.provider)) {
           if (!config.model) return { ok: false, message: "Informe o modelo NVIDIA" };
           const inferenceResponse = await fetch(base + "/chat/completions", {
             method: "POST",
@@ -563,7 +708,7 @@ async function registerIpcHandlers() {
             const authMessage = [401, 403].includes(inferenceResponse.status) ? "Chave inválida" : "Falha na inferência";
             return { ok: false, message: `${authMessage} (HTTP ${inferenceResponse.status})` };
           }
-          return { ok: true, message: "Chave e modelo NVIDIA validados (inferência OK)" };
+          return { ok: true, message: "Chave e modelo validados (inferência OK)" };
         }
 
         return { ok: true, message: config.model ? "Endpoint acessível, modelo listado" : "Endpoint acessível" };
@@ -593,10 +738,10 @@ async function registerIpcHandlers() {
       model: model || cfg.model,
       env: labelEnv(provider || cfg.provider || "none", { endpoint: endpoint || cfg.endpoint, model: model || cfg.model }, providerKey),
       canLabel: (provider || cfg.provider || "none") !== "none" &&
-        (Boolean(providerKey) || (provider || cfg.provider) === "ollama"),
+        (Boolean(providerKey) || Boolean(PROVIDERS[provider || cfg.provider || "none"]?.keyOptional)),
     };
-    if (operation === "relabel" && (!providerKey || labelCfg.provider === "none"))
-      return { jobId: null, error: "Informe um provedor de IA com chave para melhorar nomes" };
+    if (operation === "relabel" && !labelCfg.canLabel)
+      return { jobId: null, error: "Configure um provedor de IA disponível para melhorar nomes" };
     const job = { jobId: crypto.randomUUID(), projectPath, cancelled: false, child: null };
     activeJob = job;
     runJob(job, operation, labelCfg);

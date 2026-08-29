@@ -239,9 +239,9 @@ async function runQa() {
       updateApi: typeof window.graphExplorer.getUpdateStatus === 'function' && typeof window.graphExplorer.checkForUpdates === 'function'
     })`);
     const freshSetup = normalizeResult(freshSetupRaw) || {};
-    const requiredProviders = ["none","openai","anthropic","gemini","deepseek","kimi","ollama","azure","bedrock","nvidia","openrouter","groq","lmstudio","vllm","custom"];
+    const requiredProviders = ["none","ollama","lmstudio","vllm","opencode_zen","gemini","nvidia","openrouter","groq","opencode_go","openai","anthropic","deepseek","kimi","mistral","azure","bedrock","custom"];
     gate("FRESH_SETUP_PROVIDERS",
-      requiredProviders.every(p=>freshSetup.options.includes(p)) && freshSetup.options.length === 15 && freshSetup.selected === "none" && freshSetup.width >= 300,
+      requiredProviders.every(p=>freshSetup.options.includes(p)) && freshSetup.options.length === 18 && freshSetup.selected === "none" && freshSetup.width >= 300,
       `options=${freshSetup.options.length} selected=${freshSetup.selected} width=${freshSetup.width}`);
     gate("VERSION_BADGE", /^v\d+\.\d+\.\d+/.test(freshSetup.versionText) && freshSetup.updateApi,
       `text=${freshSetup.versionText} api=${freshSetup.updateApi}`);
@@ -350,6 +350,17 @@ async function runQa() {
     gate("PROVIDER_INFERENCE", validProvider.ok === true && providerFixture.seen.models > 0 && providerFixture.seen.inference > 0,
       `ok=${validProvider.ok} models=${providerFixture.seen.models} inference=${providerFixture.seen.inference}`);
 
+    log("Test: MODEL_CATALOG_DYNAMIC");
+    const catalogRaw = await withTimeout("MODEL_CATALOG_DYNAMIC", ev(qaWindow, `(async()=>{
+      const r = await window.graphExplorer.listModels({
+        provider:"nvidia", endpoint:"${fixtureEndpointEsc}", apiKey:"qa-fixture-key"
+      });
+      return JSON.stringify(r);
+    })()`), 30000);
+    const catalog = normalizeResult(catalogRaw) || {};
+    gate("MODEL_CATALOG_DYNAMIC", catalog.ok === true && Array.isArray(catalog.models) && catalog.models.some(m=>m.id === "qa-model"),
+      `ok=${catalog.ok} models=${Array.isArray(catalog.models) ? catalog.models.length : 0}`);
+
     log("Test: SAVE_AND_OPEN");
     const saveUiRaw = await withTimeout("SAVE_AND_OPEN", ev(qaWindow, `(async()=>{
       showSetup();
@@ -357,8 +368,13 @@ async function runQa() {
       document.getElementById('providerSelect').value='nvidia';
       document.getElementById('providerSelect').dispatchEvent(new Event('change'));
       document.getElementById('endpointInput').value='${fixtureEndpointEsc}';
-      document.getElementById('modelInput').value='qa-model';
       document.getElementById('keyInput').value='qa-fixture-key';
+      await refreshModels({
+        provider:'nvidia', endpoint:'${fixtureEndpointEsc}', apiKey:'qa-fixture-key',
+        select:document.getElementById('modelSelect'), meta:document.getElementById('modelMeta'),
+        profiles:document.getElementById('modelProfiles'), preferred:'qa-model', force:true
+      });
+      document.getElementById('modelSelect').value='qa-model';
       document.getElementById('sessionOnly').checked=false;
       document.getElementById('btnSaveOpen').click();
       const started=Date.now();

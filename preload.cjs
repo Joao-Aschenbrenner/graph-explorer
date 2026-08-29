@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("graphExplorer", {
 
   scanWorkspace: (root) => ipcRenderer.invoke("workspace:scan", root),
 
+  loadGraphData: (projectPath) => ipcRenderer.invoke("graph:data", projectPath),
+
   loadConfig: () => ipcRenderer.invoke("config:load"),
 
   saveConfig: (config) => ipcRenderer.invoke("config:save", config),
@@ -14,6 +16,8 @@ contextBridge.exposeInMainWorld("graphExplorer", {
   detectGraphify: () => ipcRenderer.invoke("graphify:detect"),
 
   installGraphify: () => ipcRenderer.invoke("graphify:install"),
+
+  listModels: (config) => ipcRenderer.invoke("provider:models", config),
 
   testProvider: (config) => ipcRenderer.invoke("provider:test", config),
 
