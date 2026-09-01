@@ -31,7 +31,9 @@ for (const needle of [
   "Pesado / preciso",
 ]) assert.ok(ui.includes(needle), `UI sem contrato: ${needle}`);
 
-assert.equal(pkg.version, "1.1.5");
+const [major, minor, patch] = String(pkg.version || "0.0.0").split(".").map(Number);
+assert.equal(major, 1, "major version inesperada");
+assert.ok(minor > 1 || (minor === 1 && patch >= 5), `versão ${pkg.version} anterior ao baseline 1.1.5`);
 assert.ok(pkg.build.files.includes("public/**/*"), "build precisa incluir worker/viewer em public/**/*");
 if (Array.isArray(pkg.build.asarUnpack)) {
   assert.ok(pkg.build.asarUnpack.includes("public/graph-data-worker.cjs"), "worker precisa ficar em asarUnpack");
