@@ -280,31 +280,54 @@ async function fetchProviderModels(config = {}) {
   } catch (e) { return { ok: false, models: [], message: "Não foi possível carregar modelos: " + e.message }; }
 }
 
+// Ambiente do subprocesso Graphify usa allowlist positiva: process.env inteiro
+// NUNCA é propagado. A API key do provider vai somente por env (nunca em args
+// CLI, nunca em log). sanitizeEnvValue remove NUL/CR/LF antes de qualquer uso.
+const GRAPHIFY_BASE_ENV_KEYS = [
+  "PATH", "Path", "HOME", "USERPROFILE", "TEMP", "TMP",
+  "LOCALAPPDATA", "APPDATA", "SYSTEMROOT", "COMSPEC", "SYSTEMDRIVE", "WINDIR",
+  "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR",
+];
+
+function sanitizeEnvValue(value) {
+  if (value == null) return "";
+  return String(value).replace(/[\0\r\n]/g, "").trim().slice(0, 4096);
+}
+
+function buildGraphifyBaseEnv() {
+  const env = {};
+  for (const key of GRAPHIFY_BASE_ENV_KEYS) {
+    const value = process.env[key];
+    if (typeof value === "string" && value.length) env[key] = sanitizeEnvValue(value);
+  }
+  return env;
+}
+
 function labelEnv(provider, config, providerKey) {
-  const env = { ...process.env };
+  const env = buildGraphifyBaseEnv();
   const p = PROVIDERS[provider];
   if (!p || !p.backend) return env;
   if (p.backend === "openai") {
-    env.OPENAI_API_KEY = providerKey || "";
-    env.OPENAI_BASE_URL = config.endpoint || "";
-    env.OPENAI_MODEL = config.model || "";
+    env.OPENAI_API_KEY = sanitizeEnvValue(providerKey || "");
+    env.OPENAI_BASE_URL = sanitizeEnvValue(config.endpoint || "");
+    env.OPENAI_MODEL = sanitizeEnvValue(config.model || "");
   } else if (p.backend === "claude") {
-    env.ANTHROPIC_API_KEY = providerKey || "";
-    if (config.endpoint) env.ANTHROPIC_BASE_URL = config.endpoint;
+    env.ANTHROPIC_API_KEY = sanitizeEnvValue(providerKey || "");
+    if (config.endpoint) env.ANTHROPIC_BASE_URL = sanitizeEnvValue(config.endpoint);
   } else if (p.backend === "gemini") {
-    env.GEMINI_API_KEY = providerKey || "";
+    env.GEMINI_API_KEY = sanitizeEnvValue(providerKey || "");
   } else if (p.backend === "deepseek") {
-    env.DEEPSEEK_API_KEY = providerKey || "";
-    if (config.endpoint) env.DEEPSEEK_BASE_URL = config.endpoint;
+    env.DEEPSEEK_API_KEY = sanitizeEnvValue(providerKey || "");
+    if (config.endpoint) env.DEEPSEEK_BASE_URL = sanitizeEnvValue(config.endpoint);
   } else if (p.backend === "kimi") {
-    env.KIMI_API_KEY = providerKey || "";
-    if (config.endpoint) env.KIMI_BASE_URL = config.endpoint;
+    env.KIMI_API_KEY = sanitizeEnvValue(providerKey || "");
+    if (config.endpoint) env.KIMI_BASE_URL = sanitizeEnvValue(config.endpoint);
   } else if (p.backend === "ollama") {
-    if (config.endpoint) { env.OLLAMA_HOST = config.endpoint; env.OPENAI_BASE_URL = config.endpoint; }
+    if (config.endpoint) { const host = sanitizeEnvValue(config.endpoint); env.OLLAMA_HOST = host; env.OPENAI_BASE_URL = host; }
   } else if (p.backend === "azure") {
-    env.AZURE_OPENAI_API_KEY = providerKey || "";
-    if (config.endpoint) env.AZURE_OPENAI_ENDPOINT = config.endpoint;
-    if (config.model) env.AZURE_OPENAI_DEPLOYMENT = config.model;
+    env.AZURE_OPENAI_API_KEY = sanitizeEnvValue(providerKey || "");
+    if (config.endpoint) env.AZURE_OPENAI_ENDPOINT = sanitizeEnvValue(config.endpoint);
+    if (config.model) env.AZURE_OPENAI_DEPLOYMENT = sanitizeEnvValue(config.model);
   }
   return env;
 }
@@ -390,8 +413,13 @@ async function latestGraphifyVersion() {
     return payload?.info?.version || null;
   } catch { return null; }
 }
+// runTool é usado apenas para o gerenciador de pacotes uv (auto-update do
+// Graphify) — comando fixo por allowlist, args validados, shell nunca usado.
+const RUNTOOL_COMMANDS = new Set(["uv"]);
 function runTool(command, args, timeoutMs = 180000) {
   return new Promise((resolvePromise, reject) => {
+    if (!RUNTOOL_COMMANDS.has(command)) { reject(new Error("comando de ferramenta não permitido")); return; }
+    if (!Array.isArray(args) || args.some((a) => typeof a !== "string" || a === "" || /[\r\n\0]/.test(a))) { reject(new Error("argumentos de ferramenta inválidos")); return; }
     const child = spawn(command, args, { windowsHide: true, shell: false });
     let output = "";
     let settled = false;
@@ -596,10 +624,28 @@ function emit(job, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("graphify:event", evt);
 }
 function killTree(pid) {
-  try { spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true }); } catch {}
+  const numeric = Number(pid);
+  if (!Number.isInteger(numeric) || numeric <= 0) return;
+  try { spawn("taskkill", ["/pid", String(numeric), "/T", "/F"], { windowsHide: true }); } catch {}
+}
+// Contrato do subprocesso Graphify: comando fixo, operações e flags internas —
+// o renderer nunca fornece comando nem array de args arbitrário.
+const GRAPHIFY_OPERATIONS = new Set(["generate", "update", "recluster", "relabel"]);
+const GRAPHIFY_ARGS_FIRST = new Set(["extract", "update", "cluster-only", "label"]);
+const GRAPHIFY_ARGS_FLAGS = new Set([".", "--code-only", "--no-cluster", "--no-label", "--no-viz", "--missing-only", "--backend"]);
+function validateGraphifyArgs(args) {
+  if (!Array.isArray(args) || !args.length) return false;
+  if (!GRAPHIFY_ARGS_FIRST.has(args[0])) return false;
+  for (const arg of args.slice(1)) {
+    if (typeof arg !== "string" || arg === "") return false;
+    if (/[\r\n\0]/.test(arg)) return false;
+    if (arg.startsWith("-") && !GRAPHIFY_ARGS_FLAGS.has(arg)) return false;
+  }
+  return true;
 }
 function buildSteps(operation, labelCfg) {
   const steps = [];
+  if (!GRAPHIFY_OPERATIONS.has(operation)) throw new Error("operação inválida");
   const p = PROVIDERS[labelCfg.provider];
   const labelStep = (missingOnly = true) => ({
     name: "Otimizando nomes das comunidades com IA (" + p.label + ")",
@@ -626,11 +672,24 @@ function buildSteps(operation, labelCfg) {
     if (!p || !p.backend) throw new Error("Provedor sem backend de IA");
     steps.push(labelStep(false));
   }
+  for (const step of steps) {
+    if (!validateGraphifyArgs(step.args)) throw new Error("argumentos graphify fora do contrato");
+  }
   return steps;
 }
 function spawnStep(step, job) {
   return new Promise((resolve, reject) => {
-    const child = spawn("graphify", step.args, { cwd: job.projectPath, env: step.env || process.env, windowsHide: true });
+    // Comando fixo "graphify" + args validados pelo contrato; shell nunca é usado.
+    if (!validateGraphifyArgs(step.args)) return reject(new Error("argumentos graphify fora do contrato"));
+    // Env allowlisted: só chaves/valores sanitizados entram no subprocesso.
+    const cleanEnv = {};
+    const sourceEnv = step.env || buildGraphifyBaseEnv();
+    for (const [key, value] of Object.entries(sourceEnv)) {
+      if (typeof key === "string" && key.length > 0 && !/[\r\n\0]/.test(key)) {
+        cleanEnv[key] = sanitizeEnvValue(value);
+      }
+    }
+    const child = spawn("graphify", step.args, { cwd: job.projectPath, env: cleanEnv, windowsHide: true });
     job.child = child;
     child.stdout.on("data", (d) => emit(job, { type: "stdout", message: d.toString() }));
     child.stderr.on("data", (d) => emit(job, { type: "stderr", message: d.toString() }));

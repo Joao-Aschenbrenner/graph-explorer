@@ -10,11 +10,11 @@ for (const needle of [
   "jgv-legend",
   "jgv-tooltip",
   "drawIcon",
-  "screenRadius",
+  "nodeRadius",
 ]) assert.ok(viewer.includes(needle), `viewer sem ${needle}`);
 
 assert.ok(viewer.includes("nodeRadius") || viewer.includes("baseRadius"), "viewer sem cálculo de raio do nó");
-assert.ok(viewer.includes("Passe o mouse") || viewer.includes("Clique em um nó"), "viewer sem orientação de interação");
+assert.ok(viewer.includes("Passe o mouse") || viewer.includes("Clique em um nó") || viewer.includes("Arraste um nó"), "viewer sem orientação de interação");
 
 for (const type of [
   "directory", "file", "class", "function", "interface",

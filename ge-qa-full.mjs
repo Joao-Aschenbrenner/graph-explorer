@@ -89,13 +89,24 @@ async function shot(win, name) {
   try { fs.writeFileSync(join(SHOTS, name + ".png"), (await win.webContents.capturePage()).toPNG()); } catch {}
 }
 
-function noOrphans() {
-  const found = [];
+let orphanBaseline = new Set();
+function snapshotOrphans() {
+  const pids = new Set();
   for (const n of ["graphify", "python", "python3"]) {
     try {
-      if (execSync(`tasklist /fi "IMAGENAME eq ${n}.exe" /nh`).toString().includes(`${n}.exe`)) found.push(n);
+      const out = execSync(`tasklist /fi "IMAGENAME eq ${n}.exe" /fo csv /nh`).toString();
+      for (const line of out.split(/\r?\n/)) {
+        const m = line.match(/^"?${n}\.exe"?,"?(\d+)"?/i);
+        if (m) pids.add(m[1]);
+      }
     } catch {}
   }
+  return pids;
+}
+function noOrphans() {
+  const found = [];
+  const now = snapshotOrphans();
+  for (const pid of now) if (!orphanBaseline.has(pid)) found.push(pid);
   return found;
 }
 
@@ -189,6 +200,9 @@ async function runQa() {
   await app.whenReady();
   log("ready");
 
+  orphanBaseline = snapshotOrphans();
+  log("baseline de processos externos: " + (orphanBaseline.size || 0) + " pid(s) pré-existentes serão ignorados");
+
   providerFixture = await startProviderFixture();
   await registerIpcHandlers();
   qaWindow = makeWin();
@@ -230,6 +244,7 @@ async function runQa() {
     // ── GATES: primeira execução sem config ──
     await waitFor(qaWindow, "/^v\\d+\\.\\d+\\.\\d+/.test(document.getElementById('versionBadge').textContent)", 5000);
     await waitFor(qaWindow, "getComputedStyle(document.getElementById('setupView')).display !== 'none' && document.getElementById('setupView').getBoundingClientRect().height > 0", 5000);
+    await waitFor(qaWindow, "(()=>{const w=getComputedStyle(document.getElementById('providerSelect')).width;return w.endsWith('px')&&parseFloat(w)>=300;})()", 5000);
     const freshSetupRaw = await ev(qaWindow, `JSON.stringify({
       options: [...document.getElementById('providerSelect').options].map(o=>o.value),
       labels: [...document.getElementById('providerSelect').options].map(o=>o.textContent),
@@ -578,8 +593,10 @@ async function runQa() {
     if (jobId) {
       // ── GATE: CANCEL_JOB ──
       log("Test: CANCEL_JOB");
-      // Aguardar um pouco para o job começar a processar
-      await sleep(2000);
+      // Aguardar o job iniciar (started + stage) sem depender de tempo fixo
+      const started = await waitFor(qaWindow, `(window.__EVENTS__||[]).some(e=>e.type==='started')`, 20000);
+      log("  job started: " + started);
+      await sleep(400); // pequena margem para o processo filho existir
       let cancelParsed = {};
       try {
         const raw = await withTimeout("CANCEL_JOB", ev(qaWindow, `(async()=>{
@@ -614,6 +631,8 @@ async function runQa() {
       if (fs.existsSync(tmpGraphifyOut)) {
         try { fs.rmSync(tmpGraphifyOut, { recursive: true, force: true }); } catch {}
       }
+      // Esperar activeJob liberar (evento terminal garante finally do runJob) com tolerância para job rápido
+      await sleep(1000);
 
       let runRes2;
       try {
@@ -730,14 +749,15 @@ async function runQa() {
 
     // ── GATE: GRAPH_VIEWER_ISOLATION ──
     log("Test: GRAPH_VIEWER_ISOLATION");
-    // Verificar que webview tem atributos de segurança corretos
-    // Primeiro precisamos que o app mostre um grafo existente
-    // O projeto tmp deve ter gerado graph.html
+    // O pipeline atual (--no-viz) gera graph.json e o Graph Explorer usa o
+    // viewer interno (GraphJsonViewer) — webview só existe para graph.html legado.
+    const tmpGraphJson = join(TMP_PROJ_PATH, "graphify-out", "graph.json");
+    const graphJsonExists = fs.existsSync(tmpGraphJson);
     const tmpGraphHtml = join(TMP_PROJ_PATH, "graphify-out", "graph.html");
-    const graphExists = fs.existsSync(tmpGraphHtml);
-    log("  graph.html exists: " + graphExists);
+    const graphHtmlExists = fs.existsSync(tmpGraphHtml);
+    log("  graph.json exists: " + graphJsonExists + " · graph.html exists: " + graphHtmlExists);
 
-    if (graphExists) {
+    if (graphJsonExists || graphHtmlExists) {
       // Re-scan para atualizar status do projeto
       await ev(qaWindow, `(async()=>{try{await window.graphExplorer.scanWorkspace("${REAL_WS_ESC}");}catch(e){}})()`);
       // Re-renderizar sidebar com os dados novos (scan via IPC não atualiza state.projects)
@@ -758,38 +778,70 @@ async function runQa() {
       await sleep(2500);
       await shot(qaWindow, "04-graph-viewer");
 
-      // Verificar que o webview carregou o graph.html
-      const wvLoaded = await ev(qaWindow, `(()=>{const wv=document.querySelector('webview');return wv && wv.src && wv.src.includes('graph.html');})()`).catch(() => false);
-      gate("GRAPH_LOAD", !!wvLoaded, `webviewSrc=${wvLoaded ? "graph.html" : "missing"}`);
-
-      // Verificar webview com atributos de segurança
-      let webviewAttrs = { found: false };
-      try {
-        const wvRaw = await withTimeout("WEBVIEW_READ", ev(qaWindow, `(function(){
-          const wv = document.querySelector('webview');
-          if (!wv) return JSON.stringify({found:false});
-          return JSON.stringify({
-            found: true,
-            partition: wv.getAttribute('partition'),
-            webpreferences: wv.getAttribute('webpreferences'),
-            allowpopups: wv.getAttribute('allowpopups')
-          });
-        })()`), 15000);
-        webviewAttrs = normalizeResult(wvRaw) || { found: false };
-      } catch (e) {
-        log("  webview read err: " + e.message);
+      // Viewer interno: .json-graph-viewer montado no center (pipeline graph.json)
+      // Worker thread pode demorar no primeiro load — retry com estado detalhado
+      let internalViewer = {};
+      for (let attempt = 0; attempt < 12; attempt++) {
+        internalViewer = await ev(qaWindow, `(()=>{try{return {viewer: !!document.querySelector('.json-graph-viewer'), canvas: !!document.querySelector('.json-graph-viewer .jgv-canvas'), legend: !!document.querySelector('.json-graph-viewer .jgv-legend'), centerHtml: (document.getElementById('center')||{}).innerHTML ? document.getElementById('center').innerHTML.slice(0,200) : ''};}catch(e){return {err: e.message};}})()`).catch((e) => ({ err: e.message }));
+        if (internalViewer && internalViewer.viewer && internalViewer.canvas) break;
+        await sleep(500);
       }
-      log("  webview: " + JSON.stringify(webviewAttrs));
-      gate("GRAPH_VIEWER_ISOLATION",
-        webviewAttrs.found &&
-        webviewAttrs.partition === "graph" &&
-        (webviewAttrs.webpreferences || "").includes("sandbox=yes") &&
-        (webviewAttrs.webpreferences || "").includes("contextIsolation=yes") &&
-        (webviewAttrs.webpreferences || "").includes("nodeIntegration=no"),
-        `found=${webviewAttrs.found} partition=${webviewAttrs.partition}`);
+      log("  internal viewer: " + JSON.stringify(internalViewer));
+
+      // Webview (só quando graph.html legado existe)
+      const wvLoaded = graphHtmlExists
+        ? await ev(qaWindow, `(()=>{const wv=document.querySelector('webview');return wv && wv.src && wv.src.includes('graph.html');})()`).catch(() => false)
+        : false;
+
+      if (graphJsonExists) {
+        // Pipeline novo: viewer interno carregado com dados do graph.json
+        gate("GRAPH_LOAD",
+          internalViewer.viewer && internalViewer.canvas && internalViewer.legend,
+          `viewer=${internalViewer.viewer} canvas=${internalViewer.canvas} legend=${internalViewer.legend} stats="${(internalViewer.stats || "").slice(0, 60)}"`);
+      } else {
+        gate("GRAPH_LOAD", !!wvLoaded, `webviewSrc=${wvLoaded ? "graph.html" : "missing"}`);
+      }
+
+      if (graphHtmlExists) {
+        // Verificar webview com atributos de segurança
+        let webviewAttrs = { found: false };
+        try {
+          const wvRaw = await withTimeout("WEBVIEW_READ", ev(qaWindow, `(function(){
+            const wv = document.querySelector('webview');
+            if (!wv) return JSON.stringify({found:false});
+            return JSON.stringify({
+              found: true,
+              partition: wv.getAttribute('partition'),
+              webpreferences: wv.getAttribute('webpreferences'),
+              allowpopups: wv.getAttribute('allowpopups')
+            });
+          })()`), 15000);
+          webviewAttrs = normalizeResult(wvRaw) || { found: false };
+        } catch (e) {
+          log("  webview read err: " + e.message);
+        }
+        log("  webview: " + JSON.stringify(webviewAttrs));
+        gate("GRAPH_VIEWER_ISOLATION",
+          webviewAttrs.found &&
+          webviewAttrs.partition === "graph" &&
+          (webviewAttrs.webpreferences || "").includes("sandbox=yes") &&
+          (webviewAttrs.webpreferences || "").includes("contextIsolation=yes") &&
+          (webviewAttrs.webpreferences || "").includes("nodeIntegration=no"),
+          `found=${webviewAttrs.found} partition=${webviewAttrs.partition}`);
+      } else {
+        // Pipeline novo: viewer interno roda direto no renderer da main window,
+        // que já é contextIsolation+sandbox (verificado em WEBVIEW_ISOLATION_SOURCE).
+        // O grafo não é renderizado em Node: graph:data entrega apenas JSON e o
+        // viewer usa canvas puro. Validar que o renderer não expõe require/process.
+        const rendererNoNode = await ev(qaWindow, `(()=>({noRequire: typeof require === 'undefined', noProcess: typeof process === 'undefined' || !process.versions || !process.versions.node, viewerGlobal: typeof window.GraphJsonViewer === 'object'}))()`).catch(() => ({}));
+        log("  renderer isolation: " + JSON.stringify(rendererNoNode));
+        gate("GRAPH_VIEWER_ISOLATION",
+          rendererNoNode.noRequire === true && rendererNoNode.viewerGlobal === true,
+          `noRequire=${rendererNoNode.noRequire} viewerGlobal=${rendererNoNode.viewerGlobal}`);
+      }
     } else {
-      skipGate("GRAPH_LOAD", "graph.html não encontrado no projeto tmp");
-      skipGate("GRAPH_VIEWER_ISOLATION", "graph.html não encontrado — dependência ausente");
+      skipGate("GRAPH_LOAD", "nem graph.json nem graph.html encontrados no projeto tmp");
+      skipGate("GRAPH_VIEWER_ISOLATION", "nenhum artefato de grafo — dependência ausente");
     }
 
     // ── GATE: PROMPT_COPY ──
@@ -804,9 +856,12 @@ async function runQa() {
     const promptContent = await ev(qaWindow, "document.getElementById('promptText')?.textContent?.length || 0").catch(() => 0);
     const copyBtnExists = await ev(qaWindow, "!!document.getElementById('mCopy')").catch(() => false);
 
-    // Tentar copiar
+    // Tentar copiar — clipboard exige janela visível/focada no Windows
     let copyWorked = false;
     if (copyBtnExists) {
+      if (!qaWindow.isVisible()) qaWindow.show();
+      qaWindow.focus();
+      await sleep(300);
       await ev(qaWindow, `navigator.clipboard.writeText('qa-test').then(()=>{}).catch(()=>{})`).catch(() => {});
       await ev(qaWindow, `(function(){const b=document.getElementById('mCopy');if(b)b.click();return 'clicked';})()`).catch(() => {});
       await sleep(600);

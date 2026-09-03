@@ -439,7 +439,7 @@ async function enterMain(){
     await refreshSidebar();
   } catch (e) {
     state.projects = [];
-    renderSidebar();
+    renderSidebar($("searchInput").value.trim().toLowerCase());
     $("center").innerHTML = '<div class="center-msg"><div class="big">Não foi possível abrir o workspace</div><div class="small"></div></div>';
     $("center").querySelector(".small").textContent = e.message;
   }
@@ -448,7 +448,7 @@ async function refreshSidebar(){
   if (!state.workspace) return;
   const data = await api.scanWorkspace(state.workspace);
   state.projects = data.projects || [];
-  renderSidebar();
+  renderSidebar($("searchInput").value.trim().toLowerCase());
 }
 function statusSvg(status){
   if (status === "graph-with-ia") return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3l7 4v5c0 4.4-2.9 7.5-7 9-4.1-1.5-7-4.6-7-9V7l7-4z" stroke="currentColor" stroke-width="1.8"/><path d="m8.4 12.1 2.2 2.2 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>`;
