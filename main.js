@@ -28,6 +28,8 @@ let sessionProvider = null;
 let encryptionAvailable = false;
 let graphifyCaps = null;
 let activeJob = null;
+let graphifyUpdatePromise = null;
+let graphifyUpdateCheckedAt = 0;
 let updaterInitialized = false;
 let updateDownloaded = false;
 let updateStatus = {
@@ -358,6 +360,129 @@ function runCapture(args) {
   });
 }
 
+// ── Graphify lifecycle + smart preflight ─────────────────────
+const GRAPHIFY_UPDATE_TTL_MS = 6 * 60 * 60 * 1000;
+const GRAPHIFY_IGNORE_BEGIN = "# BEGIN GRAPH EXPLORER SMART EXCLUDES";
+const GRAPHIFY_IGNORE_END = "# END GRAPH EXPLORER SMART EXCLUDES";
+const SMART_EXCLUDE_NAMES = [
+  "backups/", "backup/", "backup_original/", "**/backup_original/",
+  "**/wineprefix/", "**/drive_c/windows/",
+  "node_modules/", "vendor/", ".venv/", "venv/", ".tox/", ".nox/",
+  "dist/", "build/", "target/", "coverage/", "__pycache__/"
+];
+const SMART_EXCLUDE_PATTERNS = ["*.zip", "*.7z", "*.rar", "*.tar", "*.tar.gz", "*.tgz", "*.iso", "*.dmg", "*.img", "*.bak"];
+
+function parseVersion(value) {
+  const match = String(value || "").match(/(\d+)\.(\d+)\.(\d+)/);
+  return match ? match.slice(1, 4).map(Number) : null;
+}
+function compareVersions(a, b) {
+  const av = parseVersion(a), bv = parseVersion(b);
+  if (!av || !bv) return 0;
+  for (let i = 0; i < 3; i++) if (av[i] !== bv[i]) return av[i] > bv[i] ? 1 : -1;
+  return 0;
+}
+async function latestGraphifyVersion() {
+  try {
+    const response = await fetch("https://pypi.org/pypi/graphifyy/json", { signal: AbortSignal.timeout(12000) });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return payload?.info?.version || null;
+  } catch { return null; }
+}
+function runTool(command, args, timeoutMs = 180000) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, { windowsHide: true, shell: false });
+    let output = "";
+    let settled = false;
+    const finish = (fn, value) => { if (settled) return; settled = true; clearTimeout(timer); fn(value); };
+    const timer = setTimeout(() => { try { child.kill(); } catch {} finish(reject, new Error(`${command} excedeu ${timeoutMs}ms`)); }, timeoutMs);
+    child.stdout?.on("data", (d) => (output += d.toString()));
+    child.stderr?.on("data", (d) => (output += d.toString()));
+    child.once("error", (error) => finish(reject, error));
+    child.once("close", (code) => code === 0 ? finish(resolvePromise, output) : finish(reject, new Error(output || `${command} saiu com código ${code}`)));
+  });
+}
+async function ensureLatestGraphify(force = false) {
+  if (!force && graphifyUpdateCheckedAt && Date.now() - graphifyUpdateCheckedAt < GRAPHIFY_UPDATE_TTL_MS && graphifyCaps) return graphifyCaps;
+  if (graphifyUpdatePromise) return graphifyUpdatePromise;
+  graphifyUpdatePromise = (async () => {
+    const before = await probeGraphify();
+    const latest = await latestGraphifyVersion();
+    let updateMessage = "";
+    let updateError = null;
+    const needsUpgrade = !before.installed || !latest || compareVersions(before.version, latest) < 0;
+    if (needsUpgrade) {
+      try {
+        updateMessage = before.installed
+          ? await runTool("uv", ["tool", "upgrade", "graphifyy"])
+          : await runTool("uv", ["tool", "install", "graphifyy"]);
+      } catch (error) { updateError = error.message; }
+    }
+    const after = await probeGraphify();
+    graphifyCaps = {
+      ...after,
+      latestVersion: latest,
+      updateChecked: true,
+      updateAvailable: Boolean(latest && after.installed && compareVersions(after.version, latest) < 0),
+      updated: Boolean(before.installed && after.installed && before.version !== after.version),
+      updateMessage: updateMessage.trim().slice(-1000),
+      updateError,
+    };
+    graphifyUpdateCheckedAt = Date.now();
+    return graphifyCaps;
+  })().finally(() => { graphifyUpdatePromise = null; });
+  return graphifyUpdatePromise;
+}
+function managedIgnoreBlock(extra = []) {
+  const rules = [...new Set([...SMART_EXCLUDE_NAMES, ...SMART_EXCLUDE_PATTERNS, ...extra])];
+  return `${GRAPHIFY_IGNORE_BEGIN}\n# Gerenciado pelo Graph Explorer. Evita backups, binários e árvores de dependências gigantes.\n${rules.join("\n")}\n${GRAPHIFY_IGNORE_END}`;
+}
+async function discoverLargeRootFiles(projectPath) {
+  const extra = [];
+  const scan = async (dir, depth = 0) => {
+    if (depth > 1) return;
+    let entries = [];
+    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries.slice(0, 5000)) {
+      const full = join(dir, entry.name);
+      const lower = entry.name.toLowerCase();
+      if (entry.isDirectory()) {
+        if (["backups", "backup", "backup_original", "node_modules", "vendor", ".venv", "venv", "dist", "build", "target", "graphify-out"].includes(lower)) continue;
+        await scan(full, depth + 1);
+      } else if (entry.isFile()) {
+        try {
+          const st = await fsp.stat(full);
+          if (st.size >= 512 * 1024 * 1024) extra.push('/' + relative(projectPath, full).replaceAll('\\', '/'));
+        } catch {}
+      }
+    }
+  };
+  await scan(projectPath, 0);
+  return extra;
+}
+async function preflightGraphifyProject(projectPath) {
+  const ignorePath = join(projectPath, ".graphifyignore");
+  const hugeFiles = await discoverLargeRootFiles(projectPath);
+  const block = managedIgnoreBlock(hugeFiles);
+  let existing = "";
+  try { existing = await fsp.readFile(ignorePath, "utf8"); } catch {}
+  const start = existing.indexOf(GRAPHIFY_IGNORE_BEGIN);
+  const end = existing.indexOf(GRAPHIFY_IGNORE_END);
+  let next;
+  if (start >= 0 && end >= start) {
+    next = existing.slice(0, start) + block + existing.slice(end + GRAPHIFY_IGNORE_END.length);
+  } else {
+    next = `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${block}\n`;
+  }
+  let written = false, warning = null;
+  try { await fsp.writeFile(ignorePath, next, "utf8"); written = true; } catch (error) { warning = error.message; }
+  return {
+    written, warning, ignorePath, hugeFiles,
+    summary: `Pastas ignoradas: backups, backup_original, wineprefix, dependências/builds e arquivos compactados${hugeFiles.length ? `; ${hugeFiles.length} arquivo(s) >= 512 MB` : ""}.`,
+  };
+}
+
 // ── Workspace scan ────────────────────────────────────────────
 const IGNORE_DIRS = new Set([
   "node_modules", ".git", "venv", ".venv", "dist", "build", "target",
@@ -479,24 +604,24 @@ function buildSteps(operation, labelCfg) {
   const labelStep = (missingOnly = true) => ({
     name: "Otimizando nomes das comunidades com IA (" + p.label + ")",
     args: missingOnly
-      ? ["label", ".", "--backend", p.backend, "--missing-only"]
-      : ["label", ".", "--backend", p.backend],
+      ? ["label", ".", "--backend", p.backend, "--missing-only", "--no-viz"]
+      : ["label", ".", "--backend", p.backend, "--no-viz"],
     env: labelCfg.env,
   });
 
   if (operation === "generate") {
-    steps.push({ name: "Extraindo estrutura do código (AST)", args: ["extract", ".", "--code-only"] });
-    steps.push({ name: "Agrupando comunidades", args: ["cluster-only", "."] });
-    if (labelCfg.canLabel && p && p.backend) steps.push(labelStep(true));
+    steps.push({ name: "Extraindo estrutura do código (AST) — análise local", args: ["extract", ".", "--code-only", "--no-cluster"] });
+    steps.push({ name: "Agrupando comunidades — sem IA", args: ["cluster-only", ".", "--no-label", "--no-viz"] });
   } else if (operation === "update") {
     if (graphifyCaps && graphifyCaps.update) {
-      steps.push({ name: "Atualizando grafo", args: ["update", "."] });
+      steps.push({ name: "Atualizando código — análise local", args: ["update", ".", "--no-cluster"] });
+      steps.push({ name: "Reagrupando comunidades — sem IA", args: ["cluster-only", ".", "--no-label", "--no-viz"] });
     } else {
-      steps.push({ name: "Extraindo estrutura do código (AST)", args: ["extract", ".", "--code-only"] });
-      steps.push({ name: "Agrupando comunidades", args: ["cluster-only", "."] });
+      steps.push({ name: "Extraindo estrutura do código (AST) — análise local", args: ["extract", ".", "--code-only", "--no-cluster"] });
+      steps.push({ name: "Agrupando comunidades — sem IA", args: ["cluster-only", ".", "--no-label", "--no-viz"] });
     }
   } else if (operation === "recluster") {
-    steps.push({ name: "Reagrupando comunidades", args: ["cluster-only", "."] });
+    steps.push({ name: "Reagrupando comunidades — sem IA", args: ["cluster-only", ".", "--no-label", "--no-viz"] });
   } else if (operation === "relabel") {
     if (!p || !p.backend) throw new Error("Provedor sem backend de IA");
     steps.push(labelStep(false));
@@ -520,13 +645,20 @@ function spawnStep(step, job) {
 async function runJob(job, operation, labelCfg) {
   try {
     emit(job, { type: "started", message: "Iniciando " + operation });
+    emit(job, { type: "stage", stage: "Verificando atualização do Graphify", message: "Verificando atualização do Graphify" });
+    const caps = await ensureLatestGraphify(false);
+    emit(job, { type: "stdout", message: `[Graphify] versão ${caps.version || "não detectada"}${caps.latestVersion ? ` · mais recente ${caps.latestVersion}` : ""}${caps.updated ? " · atualizado agora" : ""}\n` });
+    if (caps.updateError) emit(job, { type: "stderr", message: `[Graphify] aviso de atualização: ${caps.updateError}\n` });
+    emit(job, { type: "stage", stage: "Pré-análise e exclusões seguras", message: "Pré-análise e exclusões seguras" });
+    const preflight = await preflightGraphifyProject(job.projectPath);
+    emit(job, { type: "stdout", message: `[Graphify] ${preflight.summary}\n[Graphify] ${preflight.written ? ".graphifyignore atualizado" : "não foi possível gravar .graphifyignore"}${preflight.warning ? `: ${preflight.warning}` : ""}\n` });
     for (const step of buildSteps(operation, labelCfg)) {
       if (job.cancelled) throw new Error("cancelled");
       emit(job, { type: "stage", stage: step.name, message: step.name });
       await spawnStep(step, job);
     }
     if (job.cancelled) throw new Error("cancelled");
-    emit(job, { type: "completed", message: "Concluído" });
+    emit(job, { type: "completed", message: operation === "relabel" ? "Otimização IA concluída" : "Grafo local concluído — use Otimizar IA quando quiser melhorar os nomes" });
   } catch (e) {
     if (String(e.message).includes("cancelled")) emit(job, { type: "cancelled", message: "Cancelado" });
     else emit(job, { type: "failed", message: e.message });
@@ -639,10 +771,7 @@ async function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle("graphify:detect", async () => {
-    if (!graphifyCaps) graphifyCaps = await probeGraphify();
-    return graphifyCaps;
-  });
+  ipcMain.handle("graphify:detect", async () => ensureLatestGraphify(false));
 
   ipcMain.handle("graphify:install", async () => {
     if (process.platform !== "win32") return { ok: false, error: "Instalação automática disponível apenas no Windows nesta versão." };
@@ -800,6 +929,7 @@ if (isMain) {
     graphifyCaps = await probeGraphify();
     await registerIpcHandlers();
     createWindow();
+    ensureLatestGraphify(true).catch((error) => console.warn("[graphify:update]", error.message));
     initializeAutoUpdater();
     app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
